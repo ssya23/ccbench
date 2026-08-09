@@ -1,4 +1,4 @@
-ccbench_add_protocol(ss2pl
+ccbench_add_protocol(wound-wait
   SOURCES   transaction.cc util.cc
   WORKLOADS bomb tpcc
   OPTIONS
