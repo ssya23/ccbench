@@ -10,6 +10,7 @@
 #include "../../include/result.hh"
 #include "include/common.hh"
 #include "include/transaction.hh"
+#include "include/timestamp.hh"
 
 using namespace std;
 
@@ -117,7 +118,10 @@ bool TxExecutor::commit() {
  * Allocate timestamp.
  * @return void
  */
-void TxExecutor::begin() { this->status_ = TransactionStatus::inflight; }
+void TxExecutor::begin() { 
+  this->status_ = TransactionStatus::inflight;
+  this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
+}
 
 /**
  * @brief Transaction read function.

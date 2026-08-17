@@ -4,6 +4,7 @@
 #include "include/result.hh"
 #include "include/transaction.hh"
 #include "include/util.hh"
+#include "include/timestamp.hh"
 
 #include "../../include/cpu.hh"
 #include "../../include/debug.hh"

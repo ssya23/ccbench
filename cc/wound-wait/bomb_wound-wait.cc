@@ -4,6 +4,7 @@
 #include "include/result.hh"
 #include "include/transaction.hh"
 #include "include/util.hh"
+#include "include/timestamp.hh"
 
 // For BoMB with next-key/gap lock like phantom avoidance.
 #include "../../include/bomb_pessimistic.hh"

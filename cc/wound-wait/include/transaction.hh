@@ -35,6 +35,7 @@ public:
   vector<Procedure> pro_set_;
   std::deque<Tuple*> gc_records_;
   const bool& quit_; // for thread termination control
+  int local_timestamp;
 
   bool reconnoitering_ = false;
   bool is_ronly_ = false;
