@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <vector> 
 
 #include "../../../include/cache_line_size.hh"
 #include "../../../include/int64byte.hh"
@@ -52,4 +53,6 @@ DECLARE_bool(ycsb);
 DECLARE_double(zipf_skew);
 #endif
 
+class TxExecutor; //前方宣言を追加する必要
 alignas(CACHE_LINE_SIZE) GLOBAL uint32_t TotalThreadNum;
+GLOBAL std::vector<TxExecutor*> AllExecutors;
