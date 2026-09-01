@@ -14,6 +14,7 @@ class Tuple {
 public:
   alignas(CACHE_LINE_SIZE) ReaderWriteLock lock_;
   TupleBody body_;
+  bool delete_flag = false;
 
   Tuple() {}
 

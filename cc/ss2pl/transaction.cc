@@ -42,6 +42,15 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  * @return void
  */
 void TxExecutor::abort() {
+
+  for (auto itr = write_set_.begin(); itr != write_set_.end(); ++itr) {
+    if ((*itr).op_ == OpType::INSERT) {
+      Masstrees[get_storage((*itr).storage_)].remove_value_if_present((*itr).key_);
+      (*itr).rcdptr_->delete_flag = true;
+      gc_records_.push_back((*itr).rcdptr_);
+    }
+  }
+
   /**
    * Release locks
    */
@@ -89,6 +98,7 @@ bool TxExecutor::commit() {
         // record put on the GC queue below.
         Masstrees[get_storage((*itr).storage_)].remove_value_if_present(
             (*itr).key_);
+        (*itr).rcdptr_->delete_flag = true;
         // create information for garbage collection
         gc_records_.push_back((*itr).rcdptr_);
         break;
@@ -127,7 +137,6 @@ Status TxExecutor::read(Storage s, std::string_view key, TupleBody** body) {
 #if ADD_ANALYSIS
   uint64_t start = rdtscp();
 #endif // ADD_ANALYSIS
-  TupleBody b;
   SetElement<Tuple>* e;
 
   /**
@@ -154,7 +163,9 @@ Status TxExecutor::read(Storage s, std::string_view key, TupleBody** body) {
 #endif
   if (tuple == nullptr) return Status::WARN_NOT_FOUND;
 
-  read_internal(s, key, tuple);
+  Status rstat;
+  rstat = read_internal(s, key, tuple);
+  if (rstat != Status::OK) return rstat;
   *body = &(read_set_.back().body_);
 
 FINISH_READ:
@@ -164,36 +175,30 @@ FINISH_READ:
   return Status::OK;
 }
 
-void TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple) {
+Status TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple) {
   TupleBody body;
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
-#ifdef DLR0
-  /**
-   * Acquire lock with wait.
-   */
-  tuple->lock_.r_lock();
-  r_lock_list_.emplace_back(&tuple->lock_);
-#elif defined(DLR1)
+
   if (tuple->lock_.r_trylock()) {
     r_lock_list_.emplace_back(&tuple->lock_);
   } else {
-    /**
-     * No-wait and abort.
-     */
+    /** No-wait and abort.*/
     this->status_ = TransactionStatus::aborted;
-    goto FINISH_READ;
+    return Status::ERROR_LOCK_FAILED;
   }
-#endif
+
+  if (tuple->delete_flag) {
+    return Status::WARN_NOT_FOUND;
+  }
 
 FINISH_READ_LOCK:
   body = TupleBody(tuple->body_.get_key(), tuple->body_.get_val(),
                    tuple->body_.get_val_align());
   read_set_.emplace_back(s, key, tuple, std::move(body));
 
-FINISH_READ:
-  return;
+  return Status::OK;
 }
 
 Status TxExecutor::scan(const Storage s, std::string_view left_key,
@@ -228,10 +233,8 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
       continue;
     }
 
-    read_internal(s, itr->body_.get_key(), itr);
-    if (status_ == TransactionStatus::aborted) {
-      return Status::ERROR_LOCK_FAILED;
-    }
+    Status rstat = read_internal(s, itr->body_.get_key(), itr);
+    if (rstat != Status::OK) return rstat;
   }
 
   if (rset_init_size != read_set_.size()) {
@@ -260,18 +263,11 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   for (auto rItr = read_set_.begin(); rItr != read_set_.end(); ++rItr) {
     if ((*rItr).storage_ != s) continue;
     if ((*rItr).key_ == key) { // hit
-#if DLR0
-      // Workaround for handling static BoMB properly
+
       if (!(*rItr).rcdptr_->lock_.tryupgrade()) {
         this->status_ = TransactionStatus::aborted;
-        goto FINISH_WRITE;
+        return Status::ERROR_LOCK_FAILED;
       }
-#elif defined(DLR1)
-      if (!(*rItr).rcdptr_->lock_.tryupgrade()) {
-        this->status_ = TransactionStatus::aborted;
-        goto FINISH_WRITE;
-      }
-#endif
 
       // upgrade success
       // remove old element of read lock list.
@@ -304,27 +300,26 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 #if ADD_ANALYSIS
   ++result_->local_tree_traversal_;
 #endif
+
   if (tuple == nullptr) return Status::WARN_NOT_FOUND;
 
-#if DLR0
-  /**
-   * Lock with wait.
-   */
-  tuple->lock_.w_lock();
-#elif defined(DLR1)
   if (!tuple->lock_.w_trylock()) {
     /**
      * No-wait and abort.
      */
     this->status_ = TransactionStatus::aborted;
-    goto FINISH_WRITE;
+    return Status::ERROR_LOCK_FAILED;
   }
-#endif
 
   /**
    * Register the contents to write lock list and write set.
    */
   w_lock_list_.emplace_back(&tuple->lock_);
+
+  if (tuple->delete_flag) {
+    return Status::WARN_NOT_FOUND;
+  }
+
   write_set_.emplace_back(s, key, tuple, std::move(body), OpType::UPDATE);
 
 FINISH_WRITE:
@@ -370,20 +365,68 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   std::uint64_t start = rdtscp();
 #endif
 
-  // cancel previous write
+  // if it already wrote the key object once.
   for (auto itr = write_set_.begin(); itr != write_set_.end(); ++itr) {
     if ((*itr).storage_ != s) continue;
-    if ((*itr).key_ == key) { write_set_.erase(itr); }
+    if ((*itr).key_ == key) {
+      (*itr).op_ = OpType::DELETE;
+      goto FINISH_DELETE;
+    }
   }
 
-  Tuple* tuple = Masstrees[get_storage(s)].get_value(key);
+  for (auto rItr = read_set_.begin(); rItr != read_set_.end(); ++rItr) {
+    if ((*rItr).storage_ != s) continue;
+    if ((*rItr).key_ == key) { // hit
+
+      if (!(*rItr).rcdptr_->lock_.tryupgrade()) {
+        this->status_ = TransactionStatus::aborted;
+        return Status::ERROR_LOCK_FAILED;
+      }
+
+      // upgrade success
+      // remove old element of read lock list.
+      for (auto lItr = r_lock_list_.begin(); lItr != r_lock_list_.end();
+           ++lItr) {
+        if (*lItr == &((*rItr).rcdptr_->lock_)) {
+          write_set_.emplace_back(s, key, (*rItr).rcdptr_, OpType::DELETE);
+          w_lock_list_.emplace_back(&(*rItr).rcdptr_->lock_);
+          r_lock_list_.erase(lItr);
+          break;
+        }
+      }
+
+      goto FINISH_DELETE;
+    }
+  }
+
+  /**
+   * Search tuple from data structure.
+   */
+  Tuple* tuple;
+  tuple = Masstrees[get_storage(s)].get_value(key);
 #if ADD_ANALYSIS
   ++result_->local_tree_traversal_;
 #endif
-  if (tuple == nullptr) { return Status::WARN_NOT_FOUND; }
+
+  if (tuple == nullptr) return Status::WARN_NOT_FOUND;
+
+  if (!tuple->lock_.w_trylock()) {
+    /**
+     * No-wait and abort.
+     */
+    this->status_ = TransactionStatus::aborted;
+    return Status::ERROR_LOCK_FAILED;
+  }
+
+  w_lock_list_.emplace_back(&tuple->lock_);
+
+  if (tuple->delete_flag) {
+    return Status::WARN_NOT_FOUND;
+  }
 
   write_set_.emplace_back(s, key, tuple, OpType::DELETE);
 
+FINISH_DELETE:
 #if ADD_ANALYSIS
   result_->local_write_latency_ += rdtscp() - start;
 #endif

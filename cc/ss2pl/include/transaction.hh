@@ -59,7 +59,7 @@ public:
 
   void read(uint64_t key);
   Status read(Storage s, std::string_view key, TupleBody** body);
-  void read_internal(Storage s, std::string_view key, Tuple* tuple);
+  Status read_internal(Storage s, std::string_view key, Tuple* tuple);
 
   Status scan(Storage s, std::string_view left_key, bool l_exclusive,
               std::string_view right_key, bool r_exclusive,
