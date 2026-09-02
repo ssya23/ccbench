@@ -135,6 +135,7 @@ bool update_order_line_and_get_ol_total(TxExecutor& tx, uint16_t w_id,
   Status status = tx.scan(Storage::OrderLine, left_key.view(), false,
                           right_key.view(), true, result);
   if (tx.status_ == TransactionStatus::aborted) { return false; }
+  if (status != Status::OK) { return false; }
   ol_total = 0.0;
   for (auto& tuple : result) {
     const std::string_view ol_key = tuple->get_key();
@@ -149,8 +150,8 @@ bool update_order_line_and_get_ol_total(TxExecutor& tx, uint16_t w_id,
 
     status = tx.update(Storage::OrderLine, ol_key,
                        TupleBody(ol_key, std::move(ol_obj)));
-    if (status != Status::OK) ERR;
     if (tx.status_ == TransactionStatus::aborted) { return false; }
+    if (status != Status::OK) { return false; }
     ol_total += ol.OL_AMOUNT;
   }
   return true;
