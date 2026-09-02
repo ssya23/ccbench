@@ -373,7 +373,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
-        if (this->status_ == TransactionStatus::aborted || result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
+        if (result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
         if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
 
         write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
