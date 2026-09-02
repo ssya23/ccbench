@@ -130,6 +130,7 @@ bool TxExecutor::commit() {
 		      break;
 		    }
 		    case OpType::INSERT: {
+          tuple->delete_flag = false;
 		      break;
 		    }
 		    case OpType::DELETE: {
@@ -469,6 +470,7 @@ Status TxExecutor::insert(Storage s, std::string_view key, TupleBody&& body) {
   if (tuple != nullptr) { return Status::WARN_ALREADY_EXISTS; }
 
   tuple = new Tuple();
+  tuple->delete_flag = true;
   tuple->init(std::move(body));
   tuple->owners[this->thid_] = local_timestamp;
 
