@@ -45,16 +45,6 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  */
 void TxExecutor::abort() {
 
-  // release waiter
-  if(this->wait_entry.owner_tuple != nullptr){
-
-    Tuple* tuple = this->wait_entry.owner_tuple;
-    int result = tuple->lock_.latch_lock();
-    this->wait_entry.removeFrom(tuple);
-    tuple->lock_.latch_unlock(result);
-
-  }
-
   /* Release locks */
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
@@ -375,7 +365,12 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
-        if(this->status_ == TransactionStatus::aborted)return Status::ERROR_LOCK_FAILED;
+        if(this->status_ == TransactionStatus::aborted){
+          int r = (*rItr).rcdptr_->lock_.latch_lock();
+          this->wait_entry.removeFrom((*rItr).rcdptr_);
+          (*rItr).rcdptr_->lock_.latch_unlock(r);
+          return Status::ERROR_LOCK_FAILED;
+        }
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
         if (this->status_ == TransactionStatus::aborted || result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
@@ -706,10 +701,18 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
       return LockResult::ABORTED;
     }
 
-    if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
+    if(tuple->delete_flag == true) {
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
+      return LockResult::NOT_FOUND;
+    }
 
     if (tuple->waiters_head != &this->wait_entry) {
       continue;
@@ -723,6 +726,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
       if(tuple->delete_flag == true){
 
+        this->wait_entry.removeFrom(tuple);
         tuple->lock_.latch_unlock(result);
         return LockResult::NOT_FOUND;
 
@@ -752,10 +756,18 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation end
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
       return LockResult::ABORTED;
     }
 
-    if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
+    if(tuple->delete_flag == true) {
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
+      return LockResult::NOT_FOUND;
+    }
 
     if (tuple->waiters_head != &this->wait_entry) {
       continue;
@@ -768,6 +780,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation end
       int result = tuple->lock_.latch_lock();
       if(tuple->delete_flag == true){
 
+        this->wait_entry.removeFrom(tuple);
         tuple->lock_.latch_unlock(result);
         return LockResult::NOT_FOUND;
 
@@ -795,12 +808,20 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation end
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 	while(true){
     if (this->status_.load() == TransactionStatus::aborted){
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
       return LockResult::ABORTED;
     }
 
     if (tuple->waiters_head != &this->wait_entry) continue;
 
-    if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
+    if(tuple->delete_flag == true) {
+      int r = tuple->lock_.latch_lock();
+      this->wait_entry.removeFrom(tuple);
+      tuple->lock_.latch_unlock(r);
+      return LockResult::NOT_FOUND;
+    }
 
     // 3. counterが使用可能か確認
     int expected = tuple->lock_.counter.load(memory_order_acquire);
@@ -810,6 +831,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
       //ここでstatusを確認することによって, 自分のreadlockが取られていることを保証する.
       if(this->status_ == TransactionStatus::aborted){
+        this->wait_entry.removeFrom(tuple);
         tuple->lock_.latch_unlock(result);
         return LockResult::ABORTED;
       }
