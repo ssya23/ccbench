@@ -6,6 +6,7 @@
 #include "../../../include/backoff.hh"
 #include "../../include/common.hh"
 #include "../../include/util.hh"
+#include "../../include/timestamp.hh"
 
 #include "glog/logging.h"
 #include "gtest/gtest.h"

@@ -31,6 +31,7 @@ void chkArg() {
   if (FLAGS_rratio > 100) { ERR; }
 
   TotalThreadNum = FLAGS_thread_num;
+  AllExecutors.resize(TotalThreadNum, nullptr); 
 
   if (FLAGS_clocks_per_us < 100) {
     cout << "CPU_MHZ is less than 100. are your really?" << endl;

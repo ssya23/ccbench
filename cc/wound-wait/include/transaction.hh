@@ -7,17 +7,25 @@
 #include "../../../include/backoff.hh"
 #include "../../../include/procedure.hh"
 #include "../../../include/result.hh"
-#include "../../../include/rwlock.hh"
 #include "../../../include/string.hh"
 #include "../../../include/util.hh"
 #include "ss2pl_op_element.hh"
 #include "tuple.hh"
+#include "waitentry.hh"
+#include "latch_rwlock.hh"
 
 enum class TransactionStatus : uint8_t {
   invalid,
   inflight,
   committed,
   aborted,
+};
+
+enum class LockResult {
+    SUCCESS,
+    ABORTED,
+    NOT_FOUND, 
+    FAILED
 };
 
 extern void writeValGenerator(char* writeVal, size_t val_size, size_t thid);
@@ -27,7 +35,7 @@ public:
   alignas(CACHE_LINE_SIZE) int thid_;
   std::vector<ReaderWriteLock*> r_lock_list_;
   std::vector<ReaderWriteLock*> w_lock_list_;
-  TransactionStatus status_ = TransactionStatus::inflight;
+  std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
   Result* result_;
   Backoff backoff_;
   vector<SetElement<Tuple>> read_set_;
@@ -35,6 +43,8 @@ public:
   vector<Procedure> pro_set_;
   std::deque<Tuple*> gc_records_;
   const bool& quit_; // for thread termination control
+  int local_timestamp;
+  WaitEntry wait_entry;
 
   bool reconnoitering_ = false;
   bool is_ronly_ = false;
@@ -58,8 +68,8 @@ public:
   void begin();
 
   void read(uint64_t key);
-  Status read(Storage s, std::string_view key, TupleBody** body);
-  void read_internal(Storage s, std::string_view key, Tuple* tuple);
+  Status read(Storage s, std::string_view key, TupleBody** body); 
+  LockResult  read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter);
 
   Status scan(Storage s, std::string_view left_key, bool l_exclusive,
               std::string_view right_key, bool r_exclusive,
@@ -93,9 +103,19 @@ public:
   bool isLeader();
 
   void leaderWork();
-
   // inline
   Tuple* get_tuple(Tuple* table, uint64_t key) { return &table[key]; }
+
+  /* wound-wait用の関数を追加 */  
+  LockResult wait_readop(Tuple* tuple);
+
+  LockResult wait_writeop(Tuple* tuple);
+
+  LockResult wait_upgradeop(Tuple* tuple);
+
+  LockResult wound_writelock(Tuple *tuple);
+
+  int wound_readlock(Tuple *tuple, int counter);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);
