@@ -18,7 +18,7 @@ public:
   TupleBody body_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
-  int owners[64]; //thread数によっては変更する必要がある. 
+  int owners[64]; //thread数によっては変更する必要がある.
 
   Tuple() {
     for (int i = 0; i < 64; ++i) owners[i] = -1;
@@ -55,9 +55,13 @@ inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
 }
 
 inline void WaitEntry::removeFrom(Tuple* tuple) {
-  if (this->prev != nullptr) this->prev->next = this->next;
+  if (this->prev != nullptr) {
+    this->prev->next = this->next;
+  }
   else tuple->waiters_head = this->next;
-  if (this->next != nullptr) this->next->prev = this->prev;
+  if (this->next != nullptr) {
+    this->next->prev = this->prev;
+  }
   this->next = nullptr;
   this->prev = nullptr;
 

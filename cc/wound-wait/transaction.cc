@@ -1,6 +1,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <cstdarg>
 
 #include <atomic>
 
@@ -43,29 +44,30 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  * @return void
  */
 void TxExecutor::abort() {
-  
+
   // release waiter
   if(this->wait_entry.owner_tuple != nullptr){
 
-    int result = this->wait_entry.owner_tuple->lock_.latch_lock();
-    this->wait_entry.removeFrom(this->wait_entry.owner_tuple);
-    this->wait_entry.owner_tuple->lock_.latch_unlock(result);
+    Tuple* tuple = this->wait_entry.owner_tuple;
+    int result = tuple->lock_.latch_lock();
+    this->wait_entry.removeFrom(tuple);
+    tuple->lock_.latch_unlock(result);
 
   }
 
-  /* Release locks */ 
+  /* Release locks */
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
 		  int prev = tuple->lock_.latch_lock();
-		  if(tuple->owners[thid_]!= -1){ //順番を気をつける必要がある.なぜなら,自分がownersにいないとその-1は自分かどうか判定できない. 
-				if(prev != -1){               //writelockがかかっていない. つまり,upgradeされていないためreadlockがかかっている. 
+		  if(tuple->owners[thid_]!= -1){ //順番を気をつける必要がある.なぜなら,自分がownersにいないとその-1は自分かどうか判定できない.
+				if(prev != -1){               //writelockがかかっていない. つまり,upgradeされていないためreadlockがかかっている.
           tuple->owners[thid_] = -1;
 					prev -= 1;
 				}
 			}
 		  tuple->lock_.latch_unlock(prev);
 	}
-   
+
 	for (auto itr = write_set_.begin(); itr != write_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
 		  int prev = tuple->lock_.latch_lock();
@@ -75,14 +77,14 @@ void TxExecutor::abort() {
         tuple->delete_flag = true;
         gc_records_.push_back(tuple);
       }
-      
+
 		  if(tuple->owners[thid_]!= -1){
 				tuple->owners[thid_] = -1;
 				prev = 0;
 			}
 		  tuple->lock_.latch_unlock(prev);
 	}
-  
+
   /* Clean-up local read/write set.*/
   read_set_.clear();
   write_set_.clear();
@@ -112,25 +114,25 @@ bool TxExecutor::commit() {
 	bool success = status_.compare_exchange_strong(expected, TransactionStatus::committed, memory_order_acq_rel, memory_order_acquire);
 	// memory fence
 	if (!success) return false; //tpcc.hh内でcommit=falseの戻り値なら自動的にabort()を実行する
-	  
+
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
-		
+
 		  int prev = tuple->lock_.latch_lock();
-      
+
 		  if(prev != -1){
 			  	tuple->owners[thid_] = -1;
 				  prev -= 1;
 		  }
 		  tuple->lock_.latch_unlock(prev);
 	}
-  
-	 
+
+
 	for (auto itr = write_set_.begin(); itr != write_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
-		
+
 		  int prev = tuple->lock_.latch_lock();
-		
+
 		  switch ((*itr).op_) {
 		    case OpType::UPDATE: {
 		      memcpy((*itr).rcdptr_->body_.get_val_ptr(), (*itr).body_.get_val_ptr(),
@@ -166,7 +168,7 @@ bool TxExecutor::commit() {
  * @brief Initialize function of transaction.
  * Allocate timestamp.
  * @return void */
-void TxExecutor::begin() { 
+void TxExecutor::begin() {
   this->status_ = TransactionStatus::inflight;
   this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
 }
@@ -200,7 +202,7 @@ Status TxExecutor::read(Storage s, std::string_view key, TupleBody** body) {
   ++result_->local_tree_traversal_;
 #endif
   if (tuple == nullptr) return Status::WARN_NOT_FOUND;
-  
+
   int rcounter;
   rcounter = tuple->lock_.latch_lock();
   if(tuple->delete_flag == true){
@@ -252,12 +254,12 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   tuple->lock_.latch_unlock(rcounter);
 
   /*
-  * headよりも大きいtimestampならばwound操作をせず,そのままwaiter_listにinsertする挙動になっている 
-  * 理由 : 
-  *   (read・write・deleteに関わらず) wait_listのheadに挿入する時には必ずwoundを行う.  
-  *   そして,waiter-listはtimestmap順でsortされておりその順番でロックを取得する. 
-  *   そのため,常にheadにいるTXのtimestampより大きいTXがLockをしていないことを保証できる. 
-  *   よって,それより大きいtimestampを持つTXがwoundしても意味がない. 
+  * headよりも大きいtimestampならばwound操作をせず,そのままwaiter_listにinsertする挙動になっている
+  * 理由 :
+  *   (read・write・deleteに関わらず) wait_listのheadに挿入する時には必ずwoundを行う.
+  *   そして,waiter-listはtimestmap順でsortされておりその順番でロックを取得する.
+  *   そのため,常にheadにいるTXのtimestampより大きいTXがLockをしていないことを保証できる.
+  *   よって,それより大きいtimestampを持つTXがwoundしても意味がない.
   */
 
   LockResult result;
@@ -277,7 +279,7 @@ FINISH_READ_LOCK:
 Status TxExecutor::scan(const Storage s, std::string_view left_key,
                         bool l_exclusive, std::string_view right_key,
                         bool r_exclusive, std::vector<TupleBody*>& result) {
-  return scan(s, left_key, l_exclusive, right_key, r_exclusive, result, -1);// これを指定すると範囲内のrecordを全部取得する. 
+  return scan(s, left_key, l_exclusive, right_key, r_exclusive, result, -1);// これを指定すると範囲内のrecordを全部取得する.
 }
 
 Status TxExecutor::scan(const Storage s, std::string_view left_key,
@@ -352,13 +354,13 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       TransactionStatus ts = status_.load(std::memory_order_acquire);
       if(ts == TransactionStatus::aborted){
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
-        return Status::ERROR_LOCK_FAILED;   
+        return Status::ERROR_LOCK_FAILED;
       }
 
       // if ((*rItr).rcdptr_->waiters_head == nullptr || (*rItr).rcdptr_->waiters_head->ts > this->local_timestamp)
-      // headよりも大きいTSを持つTXはロックを取れないことが保証されている. つまり, 自分がreadlockを持っているならheadは自分よりTSが大きい. 
-      // よって,read-setにhitしていながらheadよりもTSが大きくなることなはない. 
-      
+      // headよりも大きいTSを持つTXはロックを取れないことが保証されている. つまり, 自分がreadlockを持っているならheadは自分よりTSが大きい.
+      // よって,read-setにhitしていながらheadよりもTSが大きくなることなはない.
+
       if (upcounter == 1){
 
         upcounter = -1;
@@ -378,14 +380,14 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
         if (this->status_ == TransactionStatus::aborted || result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
         if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
-          
-        write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE); 
 
-        goto FINISH_WRITE;       
+        write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
+
+        goto FINISH_WRITE;
       }
     }
   }
-  
+
 
   /**
    * Search tuple from data structure.
@@ -414,9 +416,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       tuple->owners[thid_] = local_timestamp;
       wcounter = -1;
       acquired = true;
-    
+
     }else{
-      
+
       if (wcounter == -1){
 
         LockResult woundresult;
@@ -506,12 +508,12 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   for (auto rItr = read_set_.begin(); rItr != read_set_.end(); ++rItr) {
     if ((*rItr).storage_ != s) continue;
     if ((*rItr).key_ == key) { // hit
-      int upcounter = (*rItr).rcdptr_->lock_.latch_lock(); 
+      int upcounter = (*rItr).rcdptr_->lock_.latch_lock();
 
       TransactionStatus ts = status_.load(std::memory_order_acquire);
       if(ts == TransactionStatus::aborted){
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
-        return Status::ERROR_LOCK_FAILED;   
+        return Status::ERROR_LOCK_FAILED;
       }
 
       // if ((*rItr).rcdptr_->waiters_head == nullptr || (*rItr).rcdptr_->waiters_head->ts > this->local_timestamp){
@@ -529,16 +531,16 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           LockResult result = wait_upgradeop((*rItr).rcdptr_);
-          if(result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;  
-          if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;  //しかし,これはすでに自分がabortされているということ. 
+          if(result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
+          if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;  //しかし,これはすでに自分がabortされているということ.
 
-          write_set_.emplace_back(s, key, (*rItr).rcdptr_, OpType::DELETE); 
-          goto FINISH_DELETE;       
+          write_set_.emplace_back(s, key, (*rItr).rcdptr_, OpType::DELETE);
+          goto FINISH_DELETE;
 
-        }   
-      
+        }
+
     }
-  } 
+  }
 
   /*　Search tuple from data structure */
   Tuple* tuple;
@@ -546,7 +548,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 #if ADD_ANALYSIS
   ++result_->local_tree_traversal_;
 #endif
-  if (tuple == nullptr)return Status::WARN_NOT_FOUND; 
+  if (tuple == nullptr)return Status::WARN_NOT_FOUND;
 
   int wcounter;
   wcounter = tuple->lock_.latch_lock();
@@ -586,7 +588,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
-  
+
   }else{
     this->wait_entry.insertInto(tuple, local_timestamp);
   }
@@ -703,11 +705,15 @@ void TxExecutor::leaderWork() {
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
 	while(true){
 
-    if (this->status_.load() == TransactionStatus::aborted)return LockResult::ABORTED;
+    if (this->status_.load() == TransactionStatus::aborted){
+      return LockResult::ABORTED;
+    }
 
     if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
-        
-    if (tuple->waiters_head != &this->wait_entry) continue;
+
+    if (tuple->waiters_head != &this->wait_entry) {
+      continue;
+    }
 
     // 3. counterが使用可能か確認
     int expected = tuple->lock_.counter.load(memory_order_acquire);
@@ -720,7 +726,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         tuple->lock_.latch_unlock(result);
         return LockResult::NOT_FOUND;
 
-      } 
+      }
+
+      if (tuple->waiters_head != &this->wait_entry) {
+        tuple->lock_.latch_unlock(result);
+        continue;
+      }
 
       if(result >= 0){
 
@@ -734,17 +745,21 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         tuple->lock_.latch_unlock(result);
       }
     }
-  } 
+  }
 }
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation ends
 	while(true){
 
-    if (this->status_.load() == TransactionStatus::aborted) return LockResult::ABORTED;
+    if (this->status_.load() == TransactionStatus::aborted){
+      return LockResult::ABORTED;
+    }
 
     if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
-        
-    if (tuple->waiters_head != &this->wait_entry) continue;
+
+    if (tuple->waiters_head != &this->wait_entry) {
+      continue;
+    }
 
     int expected = tuple->lock_.counter.load(memory_order_acquire);
 
@@ -757,6 +772,12 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation end
         return LockResult::NOT_FOUND;
 
       }
+
+      if (tuple->waiters_head != &this->wait_entry) {
+        tuple->lock_.latch_unlock(result);
+        continue;
+      }
+
       if(result == 0){
 
         tuple->owners[thid_] = local_timestamp;
@@ -773,12 +794,14 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {//wait until an operation end
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 	while(true){
-    if (this->status_.load() == TransactionStatus::aborted) return LockResult::ABORTED;
+    if (this->status_.load() == TransactionStatus::aborted){
+      return LockResult::ABORTED;
+    }
 
     if (tuple->waiters_head != &this->wait_entry) continue;
 
     if(tuple->delete_flag == true) return LockResult::NOT_FOUND;
-        
+
     // 3. counterが使用可能か確認
     int expected = tuple->lock_.counter.load(memory_order_acquire);
     if (expected == 1) {
@@ -789,6 +812,11 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       if(this->status_ == TransactionStatus::aborted){
         tuple->lock_.latch_unlock(result);
         return LockResult::ABORTED;
+      }
+
+      if (tuple->waiters_head != &this->wait_entry) {
+        tuple->lock_.latch_unlock(result);
+        continue;
       }
 
       if(result == 1){
@@ -807,8 +835,8 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
 	for (uint32_t i = 0; i < TotalThreadNum; i++) {
     if(tuple->owners[i] == -1){
       continue;
-    
-    /* counterとownersはlatchよってatomicに処理される. そのため,それらが整合していることは保証される. 
+
+    /* counterとownersはlatchよってatomicに処理される. そのため,それらが整合していることは保証される.
      * counter = -1 ならownersにtimestampを登録しているのは一つのTXしかない. よって,それに当たると即座に終了して良い.*/
     }else if (tuple->owners[i] > local_timestamp) {
       TransactionStatus expected = TransactionStatus::inflight;

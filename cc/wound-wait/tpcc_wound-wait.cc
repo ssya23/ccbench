@@ -36,7 +36,7 @@ int main(int argc, char* argv[]) try {
       [](size_t thid, const bool& quit, Backoff& /*unused*/) {
         return TxExecutor(thid, &CCBenchResults[thid], quit);
       },
-      [](TxExecutor& trans, size_t thid) { 
+      [](TxExecutor& trans, size_t thid) {
         //ラムダ式=名前を付けずにその場で作る、小さな関数
         //[キャプチャ](引数) { 処理内容 }
         AllExecutors[thid] = &trans;
