@@ -160,8 +160,11 @@ bool TxExecutor::commit() {
  * Allocate timestamp.
  * @return void */
 void TxExecutor::begin() {
+  bool is_retry = (this->status_ == TransactionStatus::aborted);
   this->status_ = TransactionStatus::inflight;
-  this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
+  if (!is_retry) {
+    this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 /**
