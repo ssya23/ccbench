@@ -687,20 +687,6 @@ Status TxExecutor::write_lock(Storage s, std::string_view key) {
   return Status::OK;
 }
 
-void TxExecutor::unlockList() {
-  for (auto itr = r_lock_list_.begin(); itr != r_lock_list_.end(); ++itr)
-    (*itr)->r_unlock();
-
-  for (auto itr = w_lock_list_.begin(); itr != w_lock_list_.end(); ++itr)
-    (*itr)->w_unlock();
-
-  /**
-   * Clean-up local lock set.
-   */
-  r_lock_list_.clear();
-  w_lock_list_.clear();
-}
-
 void TxExecutor::reconnoiter_begin() { reconnoitering_ = true; }
 
 void TxExecutor::reconnoiter_end() {
@@ -913,7 +899,7 @@ int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
 
         this->status_.store(TransactionStatus::aborted, memory_order_release);
         return counter;
-        
+
       }else{ //CAS成功!!
         tuple->owners[i] = -1;
         counter --;
