@@ -212,7 +212,6 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
                         bool r_exclusive, std::vector<TupleBody*>& result,
                         int64_t limit) {
   result.clear();
-  auto rset_init_size = read_set_.size();
 
   std::vector<Tuple*> scan_res;
   Masstrees[get_storage(s)].scan(
@@ -235,13 +234,7 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
 
     Status rstat = read_internal(s, itr->body_.get_key(), itr);
     if (rstat != Status::OK) return rstat;
-  }
-
-  if (rset_init_size != read_set_.size()) {
-    for (auto itr = read_set_.begin() + rset_init_size; itr != read_set_.end();
-         ++itr) {
-      result.emplace_back(&((*itr).body_));
-    }
+    result.emplace_back(&(read_set_.back().body_));
   }
 
   return Status::OK;

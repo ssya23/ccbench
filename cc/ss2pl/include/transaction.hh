@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <queue>
+#include <deque>
 #include "../../../include/tx_executor_concept.hh"
 
 #include "../../../include/backoff.hh"
@@ -30,8 +31,8 @@ public:
   TransactionStatus status_ = TransactionStatus::inflight;
   Result* result_;
   Backoff backoff_;
-  vector<SetElement<Tuple>> read_set_;
-  vector<SetElement<Tuple>> write_set_;
+  std::deque<SetElement<Tuple>> read_set_;
+  std::deque<SetElement<Tuple>> write_set_;
   vector<Procedure> pro_set_;
   std::deque<Tuple*> gc_records_;
   const bool& quit_; // for thread termination control
@@ -42,8 +43,6 @@ public:
 
   TxExecutor(int thid, Result* res, const bool& quit)
       : thid_(thid), result_(res), backoff_(FLAGS_clocks_per_us), quit_(quit) {
-    //    read_set_.reserve(FLAGS_max_ope);
-    //    write_set_.reserve(FLAGS_max_ope);
     //    pro_set_.reserve(FLAGS_max_ope);
     //    r_lock_list_.reserve(FLAGS_max_ope);
     //    w_lock_list_.reserve(FLAGS_max_ope);
