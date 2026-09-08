@@ -267,7 +267,10 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
         return LockResult::ABORTED;
 
       }else if(woundresult == LockResult::SUCCESS){
-        rcounter = 0;
+        rcounter = 1;
+        tuple->owners[thid_] = local_timestamp;
+        tuple->lock_.latch_unlock(rcounter);
+        goto FINISH_READ_LOCK;
 
       }
     }
@@ -449,17 +452,17 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           return Status::ERROR_LOCK_FAILED;
 
         }else if(woundresult == LockResult::SUCCESS){
-          wcounter = 0;
+          tuple->owners[thid_] = local_timestamp;
+          wcounter = -1;
+          acquired = true;
         
         }else if(woundresult == LockResult::FAILED){}
 
-      }else if (wcounter >= 1){
-        wcounter = wound_readlock(tuple, wcounter);
-
-      }
-
-      this->wait_entry.insertInto(tuple, local_timestamp);
+      }else if (wcounter >= 1) wcounter = wound_readlock(tuple, wcounter);
+      
+      if(!acquired)this->wait_entry.insertInto(tuple, local_timestamp);
     }
+
   }else{
     this->wait_entry.insertInto(tuple, local_timestamp);
   }
@@ -584,30 +587,29 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   if (tuple->waiters_head == nullptr || tuple->waiters_head->ts > this->local_timestamp) {
 
     if (wcounter == 0) {
-
       tuple->owners[thid_] = local_timestamp;
       wcounter = -1;
       acquired = true;
 
-    } else {
-
+    }else{
       if (wcounter == -1){
-
         LockResult woundresult;
         woundresult = wound_writelock(tuple);
         if(woundresult == LockResult::ABORTED){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
+        
         }else if(woundresult == LockResult::SUCCESS){
-          wcounter = 0;
-        }else if(woundresult == LockResult::FAILED){}
-
+          wcounter = -1;
+          tuple->owners[thid_] = local_timestamp;
+          acquired = true;
+        }
       }
       else if (wcounter >= 1){
         wcounter = wound_readlock(tuple, wcounter);
       }
-
-      this->wait_entry.insertInto(tuple, local_timestamp);
+      
+      if (!acquired)this->wait_entry.insertInto(tuple, local_timestamp);
     }
 
   }else{
@@ -690,7 +692,7 @@ Status TxExecutor::write_lock(Storage s, std::string_view key) {
 void TxExecutor::reconnoiter_begin() { reconnoitering_ = true; }
 
 void TxExecutor::reconnoiter_end() {
-  unlockList();
+  // unlockList(); この関数自体TPC-CとYCSBでは使われない.
   read_set_.clear();
   reconnoitering_ = false;
   begin();
