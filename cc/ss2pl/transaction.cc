@@ -180,7 +180,6 @@ Status TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple) 
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
-
   if (tuple->lock_.r_trylock()) {
     r_lock_list_.emplace_back(&tuple->lock_);
   } else {
@@ -189,9 +188,8 @@ Status TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple) 
     return Status::ERROR_LOCK_FAILED;
   }
 
-  if (tuple->delete_flag) {
-    return Status::WARN_NOT_FOUND;
-  }
+  if (tuple->delete_flag) return Status::WARN_NOT_FOUND;
+  
 
 FINISH_READ_LOCK:
   body = TupleBody(tuple->body_.get_key(), tuple->body_.get_val(),
