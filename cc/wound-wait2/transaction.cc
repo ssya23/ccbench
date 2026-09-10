@@ -300,7 +300,6 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   if(tuple->waiters_head == nullptr){
     // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
     for (uint32_t i = 0; i < TotalThreadNum; i++) {
-      if (static_cast<int>(i) == thid_) continue;
       if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
     }
   }
@@ -418,7 +417,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         }else if(this->waiter_count_.load() > 0){
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
             if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
@@ -426,7 +424,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           utuple->owner_older = true;
         }else{
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
             if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
@@ -528,7 +525,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
     if(!acquired){
       // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
       for (uint32_t i = 0; i < TotalThreadNum; i++) {
-        if (static_cast<int>(i) == thid_) continue;
         if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
@@ -675,7 +671,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }else if(this->waiter_count_.load() > 0){
 
           for(uint32_t i = 0; i < TotalThreadNum; i++){
-            if (static_cast<int>(i) == thid_) continue;
             if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
@@ -683,7 +678,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           utuple->owner_older = true;
         }else{
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
             if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
@@ -781,7 +775,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
     if(!acquired){
       // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
       for (uint32_t i = 0; i < TotalThreadNum; i++) {
-        if (static_cast<int>(i) == thid_) continue;
         if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
@@ -1212,7 +1205,6 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       if(result == 1){
         result = -1;
         this->wait_entry.removeFrom(tuple);
-        if (tuple->waiters_head != nullptr) { this->waiter_count_.fetch_add(1, memory_order_acq_rel); fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)tuple, this->waiter_count_.load()); }
         tuple->owner_older = true; 
         tuple->lock_.latch_unlock(result);
         return LockResult::SUCCESS;
