@@ -173,6 +173,7 @@ bool TxExecutor::commit() {
 void TxExecutor::begin() {
   bool is_retry = (this->status_ == TransactionStatus::aborted);
   this->status_ = TransactionStatus::inflight;
+  fprintf(stderr, "[BEGIN] thid=%d is_retry=%d old_ts=%d old_wc=%d\n", thid_, is_retry, local_timestamp, this->waiter_count_.load());
   this->waiter_count_.store(0, std::memory_order_relaxed);
   if (!is_retry) {
     this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
@@ -294,7 +295,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
     for (uint32_t i = 0; i < TotalThreadNum; i++) {
       if (static_cast<int>(i) == thid_) continue;
-      if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+      if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
     }
   }
   this->wait_entry.insertInto(tuple, this->local_timestamp);
@@ -411,7 +412,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }else if(this->waiter_count_.load() > 0){
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
             if (static_cast<int>(i) == thid_) continue;
-            if (utuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+            if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
@@ -419,7 +420,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }else{
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
             if (static_cast<int>(i) == thid_) continue;
-            if (utuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+            if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = false; // WoundせずにWaitする
@@ -517,7 +518,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
       for (uint32_t i = 0; i < TotalThreadNum; i++) {
         if (static_cast<int>(i) == thid_) continue;
-        if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+        if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
@@ -659,7 +660,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
           for(uint32_t i = 0; i < TotalThreadNum; i++){
             if (static_cast<int>(i) == thid_) continue;
-            if (utuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+            if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
@@ -667,7 +668,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }else{
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
             if (static_cast<int>(i) == thid_) continue;
-            if (utuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+            if (utuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)utuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
           }
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = false; // WoundせずにWaitする
@@ -761,7 +762,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       // 自分が最初のwaiterになる → 現在の所有者(複数のことがある)のwaiter_count_を上げる
       for (uint32_t i = 0; i < TotalThreadNum; i++) {
         if (static_cast<int>(i) == thid_) continue;
-        if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+        if (tuple->owners[i] != -1) { fprintf(stderr, "[WC+] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel)+1); }
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
@@ -904,7 +905,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if (tuple->waiters_head == nullptr) {
         for (uint32_t i = 0; i < TotalThreadNum; i++) {
           if (static_cast<int>(i) == thid_) continue;
-          if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -973,7 +974,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
           if (tuple->waiters_head == nullptr) {
             for (uint32_t i = 0; i < TotalThreadNum; i++) {
               if (static_cast<int>(i) == thid_) continue;
-              if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+              if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1015,7 +1016,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if (tuple->waiters_head == nullptr) {
         for (uint32_t i = 0; i < TotalThreadNum; i++) {
           if (static_cast<int>(i) == thid_) continue;
-          if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1091,7 +1092,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
           if (tuple->waiters_head == nullptr) {
             for (uint32_t i = 0; i < TotalThreadNum; i++) {
               if (static_cast<int>(i) == thid_) continue;
-              if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+              if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1135,7 +1136,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       if (tuple->waiters_head == nullptr) {
         for (uint32_t i = 0; i < TotalThreadNum; i++) {
           if (static_cast<int>(i) == thid_) continue;
-          if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1163,7 +1164,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         if (tuple->waiters_head == nullptr) {
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
             if (static_cast<int>(i) == thid_) continue;
-            if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1193,7 +1194,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         if (tuple->waiters_head == nullptr) {
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
             if (static_cast<int>(i) == thid_) continue;
-            if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            if (tuple->owners[i] != -1) { fprintf(stderr, "[WC-] src_thid=%d target_thid=%d tuple=%p new=%d\n", thid_, i, (void*)tuple, AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel)-1); }
           }
         }
         tuple->lock_.latch_unlock(result);
