@@ -439,7 +439,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           utuple->owners[thid_] = local_timestamp;
           fprintf(stderr, "[ACQUIRE] thid=%d tuple=%p ts=%d\n", thid_, (void*)utuple, local_timestamp);
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-      fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)tuple, this->waiter_count_.load());
+      fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)utuple, this->waiter_count_.load());
           utuple->owner_older = true;
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, std::move(body),OpType::UPDATE);
@@ -696,7 +696,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           utuple->owners[thid_] = local_timestamp;
           fprintf(stderr, "[ACQUIRE] thid=%d tuple=%p ts=%d\n", thid_, (void*)utuple, local_timestamp);
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-      fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)tuple, this->waiter_count_.load());
+      fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)utuple, this->waiter_count_.load());
           utuple->owner_older = true;
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, OpType::DELETE);
