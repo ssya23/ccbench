@@ -965,13 +965,13 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(result >= 0){
         tuple->owners[thid_] = local_timestamp;
       fprintf(stderr, "[ACQUIRE] thid=%d tuple=%p ts=%d\n", thid_, (void*)tuple, local_timestamp);
+        if (result == 0) tuple->owner_older = true; // 自分が最初の一人なら、次のheadより自分は必ず古い
+        this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head != nullptr) {
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
       fprintf(stderr, "[WC+SELF] thid=%d tuple=%p new=%d\n", thid_, (void*)tuple, this->waiter_count_.load());
-          if (result == 0) tuple->owner_older = true; // 自分が最初の一人なら、次のheadより自分は必ず古い
         }
 		    result ++;
-        this->wait_entry.removeFrom(tuple);
 		    tuple->lock_.latch_unlock(result);
         return LockResult::SUCCESS;
       }else{
