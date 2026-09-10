@@ -37,6 +37,7 @@ public:
   std::vector<ReaderWriteLock*> r_lock_list_;
   std::vector<ReaderWriteLock*> w_lock_list_;
   std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
+  std::atomic<int> waiter_count_ = 0; // 自分が保持しているタプルのうち、待ち行列が非空のものの数
   Result* result_;
   Backoff backoff_;
   std::deque<SetElement<Tuple>> read_set_;
