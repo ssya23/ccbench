@@ -18,6 +18,7 @@ public:
   TupleBody body_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
+  bool owner_older = false; // 現在の所有者(群)がheadより古いと確定しているか
   int owners[64]; //thread数によっては変更する必要がある.
 
   Tuple() {
