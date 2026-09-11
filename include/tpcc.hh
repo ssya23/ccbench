@@ -121,7 +121,11 @@ public:
     rand.init();
 
     // TODO: move this codes to appropriate place
-    // set_tx_name(TxType::xxx, "xxx");
+    set_tx_name(TxType::NewOrder, "NewOrder");
+    set_tx_name(TxType::Payment, "Payment");
+    set_tx_name(TxType::OrderStatus, "OrderStatus");
+    set_tx_name(TxType::Delivery, "Delivery");
+    set_tx_name(TxType::StockLevel, "StockLevel");
 
     TPCCInitializaer<Tuple, Param>::load(param);
   }
