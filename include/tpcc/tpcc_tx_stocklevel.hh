@@ -14,7 +14,7 @@ bool get_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   dist = &body->get_value().cast_to<District>();
   return true;
 }
@@ -27,7 +27,7 @@ bool get_stock(TxExecutor& tx, uint16_t w_id, uint32_t i_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Stock, s_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   stock = &body->get_value().cast_to<Stock>();
   return true;
 }

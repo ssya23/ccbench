@@ -105,7 +105,7 @@ bool run_order_status(TxExecutor& tx, TPCCQuery::OrderStatus* query) {
   TupleBody* body;
   Status stat = tx.read(Storage::Customer, key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   const Customer& cust = body->get_value().cast_to<Customer>();
   c_id = cust.C_ID;
 
