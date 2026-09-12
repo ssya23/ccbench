@@ -21,7 +21,7 @@ bool get_warehouse(TxExecutor& tx, uint16_t w_id, const Warehouse*& ware) {
   TupleBody* body;
   Status stat = tx.read(Storage::Warehouse, w_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   ware = &body->get_value().cast_to<Warehouse>();
   return true;
 }
@@ -35,7 +35,7 @@ bool get_customer(TxExecutor& tx, uint32_t c_id, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Customer, c_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   cust = &body->get_value().cast_to<Customer>();
   return true;
 }
@@ -59,7 +59,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   HeapObject d_obj;
   d_obj.allocate<District>();
   District& new_dist = d_obj.ref();
@@ -71,7 +71,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   stat = tx.update(Storage::District, d_key.view(),
                    TupleBody(d_key.view(), std::move(d_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -143,7 +143,8 @@ bool insert_neworder(TxExecutor& tx, uint32_t o_id, uint8_t d_id,
   Status stat = tx.insert(Storage::NewOrder, no_key.view(),
                           TupleBody(no_key.view(), std::move(no_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat == Status::WARN_ALREADY_EXISTS) { return false; }
+  if (stat == Status::WARN_ALREADY_EXISTS ||
+      tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -163,7 +164,7 @@ bool get_item(TxExecutor& tx, uint32_t ol_i_id, const Item*& item) {
   TupleBody* body;
   Status stat = tx.read(Storage::Item, i_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   item = &body->get_value().cast_to<Item>();
   return true;
 }
@@ -193,7 +194,7 @@ bool get_and_update_stock(TxExecutor& tx, uint16_t ol_supply_w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Stock, s_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   const Stock& old_sto = body->get_value().cast_to<Stock>();
 
   HeapObject s_obj;
@@ -215,7 +216,7 @@ bool get_and_update_stock(TxExecutor& tx, uint16_t ol_supply_w_id,
   stat = tx.update(Storage::Stock, s_key.view(),
                    TupleBody(s_key.view(), std::move(s_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -279,7 +280,8 @@ bool insert_orderline(TxExecutor& tx, uint32_t o_id, uint8_t d_id,
   Status stat = tx.insert(Storage::OrderLine, ol_key.view(),
                           TupleBody(ol_key.view(), std::move(ol_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat == Status::WARN_ALREADY_EXISTS) { return false; }
+  if (stat == Status::WARN_ALREADY_EXISTS ||
+      tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
