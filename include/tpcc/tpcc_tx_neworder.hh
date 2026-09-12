@@ -1,10 +1,57 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+#include <iostream>
+
 #include "../tuple_body.hh"
 
 #include "tpcc_query.hh"
 #include "tpcc_tables.hh"
 #include "tpcc_util.hh"
+
+#ifdef GLOBAL_VALUE_DEFINE
+std::atomic<uint64_t> NewOrderAbortWarehouse(0);
+std::atomic<uint64_t> NewOrderAbortCustomer(0);
+std::atomic<uint64_t> NewOrderAbortDistrictRead(0);
+std::atomic<uint64_t> NewOrderAbortDistrictUpdate(0);
+std::atomic<uint64_t> NewOrderAbortInsertOrder(0);
+std::atomic<uint64_t> NewOrderAbortInsertOrderSecondary(0);
+std::atomic<uint64_t> NewOrderAbortInsertNewOrder(0);
+std::atomic<uint64_t> NewOrderAbortItem(0);
+std::atomic<uint64_t> NewOrderAbortStockRead(0);
+std::atomic<uint64_t> NewOrderAbortStockUpdate(0);
+std::atomic<uint64_t> NewOrderAbortInsertOrderLine(0);
+#else
+extern std::atomic<uint64_t> NewOrderAbortWarehouse;
+extern std::atomic<uint64_t> NewOrderAbortCustomer;
+extern std::atomic<uint64_t> NewOrderAbortDistrictRead;
+extern std::atomic<uint64_t> NewOrderAbortDistrictUpdate;
+extern std::atomic<uint64_t> NewOrderAbortInsertOrder;
+extern std::atomic<uint64_t> NewOrderAbortInsertOrderSecondary;
+extern std::atomic<uint64_t> NewOrderAbortInsertNewOrder;
+extern std::atomic<uint64_t> NewOrderAbortItem;
+extern std::atomic<uint64_t> NewOrderAbortStockRead;
+extern std::atomic<uint64_t> NewOrderAbortStockUpdate;
+extern std::atomic<uint64_t> NewOrderAbortInsertOrderLine;
+#endif
+
+inline void displayNewOrderAbortBreakdown() {
+  std::cout << "[NewOrder abort breakdown] warehouse="
+            << NewOrderAbortWarehouse.load()
+            << ", customer=" << NewOrderAbortCustomer.load()
+            << ", district_read=" << NewOrderAbortDistrictRead.load()
+            << ", district_update=" << NewOrderAbortDistrictUpdate.load()
+            << ", insert_order=" << NewOrderAbortInsertOrder.load()
+            << ", insert_order_secondary="
+            << NewOrderAbortInsertOrderSecondary.load()
+            << ", insert_neworder=" << NewOrderAbortInsertNewOrder.load()
+            << ", item=" << NewOrderAbortItem.load()
+            << ", stock_read=" << NewOrderAbortStockRead.load()
+            << ", stock_update=" << NewOrderAbortStockUpdate.load()
+            << ", insert_orderline=" << NewOrderAbortInsertOrderLine.load()
+            << std::endl;
+}
 
 /**
  * =======================================================================+
@@ -21,7 +68,10 @@ bool get_warehouse(TxExecutor& tx, uint16_t w_id, const Warehouse*& ware) {
   TupleBody* body;
   Status stat = tx.read(Storage::Warehouse, w_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortWarehouse.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   ware = &body->get_value().cast_to<Warehouse>();
   return true;
 }
@@ -35,7 +85,10 @@ bool get_customer(TxExecutor& tx, uint32_t c_id, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Customer, c_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortCustomer.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   cust = &body->get_value().cast_to<Customer>();
   return true;
 }
@@ -59,7 +112,10 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortDistrictRead.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   HeapObject d_obj;
   d_obj.allocate<District>();
   District& new_dist = d_obj.ref();
@@ -71,7 +127,10 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   stat = tx.update(Storage::District, d_key.view(),
                    TupleBody(d_key.view(), std::move(d_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortDistrictUpdate.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   return true;
 }
 
@@ -106,6 +165,7 @@ bool insert_order(TxExecutor& tx, uint32_t o_id, uint8_t d_id, uint16_t w_id,
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat == Status::WARN_ALREADY_EXISTS ||
       tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortInsertOrder.fetch_add(1, std::memory_order_relaxed);
     dump(tx.thid_, "insert order failed");
     return false;
   }
@@ -115,6 +175,7 @@ bool insert_order(TxExecutor& tx, uint32_t o_id, uint8_t d_id, uint16_t w_id,
                    TupleBody(o_sec_key.view(), std::move(key_obj)));
   if (stat == Status::WARN_ALREADY_EXISTS ||
       tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortInsertOrderSecondary.fetch_add(1, std::memory_order_relaxed);
     dump(tx.thid_, "insert order-secondary failed");
     return false;
   }
@@ -144,7 +205,10 @@ bool insert_neworder(TxExecutor& tx, uint32_t o_id, uint8_t d_id,
                           TupleBody(no_key.view(), std::move(no_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat == Status::WARN_ALREADY_EXISTS ||
-      tx.status_ == TransactionStatus::aborted) { return false; }
+      tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortInsertNewOrder.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   return true;
 }
 
@@ -164,7 +228,10 @@ bool get_item(TxExecutor& tx, uint32_t ol_i_id, const Item*& item) {
   TupleBody* body;
   Status stat = tx.read(Storage::Item, i_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortItem.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   item = &body->get_value().cast_to<Item>();
   return true;
 }
@@ -194,7 +261,10 @@ bool get_and_update_stock(TxExecutor& tx, uint16_t ol_supply_w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Stock, s_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortStockRead.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   const Stock& old_sto = body->get_value().cast_to<Stock>();
 
   HeapObject s_obj;
@@ -216,7 +286,10 @@ bool get_and_update_stock(TxExecutor& tx, uint16_t ol_supply_w_id,
   stat = tx.update(Storage::Stock, s_key.view(),
                    TupleBody(s_key.view(), std::move(s_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortStockUpdate.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   return true;
 }
 
@@ -281,7 +354,10 @@ bool insert_orderline(TxExecutor& tx, uint32_t o_id, uint8_t d_id,
                           TupleBody(ol_key.view(), std::move(ol_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat == Status::WARN_ALREADY_EXISTS ||
-      tx.status_ == TransactionStatus::aborted) { return false; }
+      tx.status_ == TransactionStatus::aborted) {
+    NewOrderAbortInsertOrderLine.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   return true;
 }
 

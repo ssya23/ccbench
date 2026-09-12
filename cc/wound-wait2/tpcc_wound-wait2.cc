@@ -49,6 +49,7 @@ int main(int argc, char* argv[]) try {
       });
 
   displayStockLevelAbortBreakdown();
+  displayNewOrderAbortBreakdown();
 
   return 0;
 } catch (const bad_alloc&) { ERR; }
