@@ -43,5 +43,7 @@ int main(int argc, char* argv[]) try {
 #endif
       });
 
+  displayStockLevelAbortBreakdown();
+
   return 0;
 } catch (const bad_alloc&) { ERR; }

@@ -1,10 +1,31 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
+#include <iostream>
+
 #include "../tuple_body.hh"
 
 #include "tpcc_query.hh"
 #include "tpcc_tables.hh"
 #include "tpcc_util.hh"
+
+#ifdef GLOBAL_VALUE_DEFINE
+std::atomic<uint64_t> StockLevelAbortDistrict(0);
+std::atomic<uint64_t> StockLevelAbortScan(0);
+std::atomic<uint64_t> StockLevelAbortStock(0);
+#else
+extern std::atomic<uint64_t> StockLevelAbortDistrict;
+extern std::atomic<uint64_t> StockLevelAbortScan;
+extern std::atomic<uint64_t> StockLevelAbortStock;
+#endif
+
+inline void displayStockLevelAbortBreakdown() {
+  std::cout << "[StockLevel abort breakdown] district="
+            << StockLevelAbortDistrict.load()
+            << ", scan=" << StockLevelAbortScan.load()
+            << ", stock=" << StockLevelAbortStock.load() << std::endl;
+}
 
 template <typename TxExecutor, typename TxStatus>
 bool get_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
@@ -14,7 +35,10 @@ bool get_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    StockLevelAbortDistrict.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   dist = &body->get_value().cast_to<District>();
   return true;
 }
@@ -27,7 +51,10 @@ bool get_stock(TxExecutor& tx, uint16_t w_id, uint32_t i_id,
   TupleBody* body;
   Status stat = tx.read(Storage::Stock, s_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) {
+    StockLevelAbortStock.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
   stock = &body->get_value().cast_to<Stock>();
   return true;
 }
@@ -50,7 +77,10 @@ bool run_stock_level(TxExecutor& tx, TPCCQuery::StockLevel* query) {
   (void) tx.scan(Storage::OrderLine, low.view(), false, up.view(), true,
                  result);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (tx.status_ == TransactionStatus::aborted) { return false; }
+  if (tx.status_ == TransactionStatus::aborted) {
+    StockLevelAbortScan.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
 
   // Collect item IDs first since read/write set vector might be extended
   // and the pointer will be obsolete even though this is not the best way.
