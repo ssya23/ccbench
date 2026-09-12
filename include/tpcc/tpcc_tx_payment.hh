@@ -24,7 +24,7 @@ bool get_and_update_warehouse(TxExecutor& tx, uint16_t w_id, double h_amount,
   TupleBody* body;
   Status stat = tx.read(Storage::Warehouse, w_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   Warehouse& old_ware = body->get_value().cast_to<Warehouse>();
 
   HeapObject w_obj;
@@ -39,7 +39,7 @@ bool get_and_update_warehouse(TxExecutor& tx, uint16_t w_id, double h_amount,
   stat = tx.update(Storage::Warehouse, w_key.view(),
                    TupleBody(w_key.view(), std::move(w_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -61,7 +61,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   TupleBody* body;
   Status stat = tx.read(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   District& old_dist = body->get_value().cast_to<District>();
 
   HeapObject d_obj;
@@ -76,7 +76,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   stat = tx.update(Storage::District, d_key.view(),
                    TupleBody(d_key.view(), std::move(d_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -164,7 +164,7 @@ bool get_and_update_customer(TxExecutor& tx, const SimpleKey<8>& c_key,
   TupleBody* body;
   Status stat = tx.read(Storage::Customer, c_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   const Customer& old_cust = body->get_value().cast_to<Customer>();
 
   HeapObject c_obj;
@@ -188,7 +188,7 @@ bool get_and_update_customer(TxExecutor& tx, const SimpleKey<8>& c_key,
   stat = tx.update(Storage::Customer, c_key.view(),
                    TupleBody(c_key.view(), std::move(c_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat != Status::OK) { return false; }
+  if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
@@ -224,7 +224,8 @@ bool insert_history(TxExecutor& tx, uint32_t c_id, uint8_t c_d_id,
   Status stat = tx.insert(Storage::History, h_key.view(),
                           TupleBody(h_key.view(), std::move(h_obj)));
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
-  if (stat == Status::WARN_ALREADY_EXISTS) { return false; }
+  if (stat == Status::WARN_ALREADY_EXISTS ||
+      tx.status_ == TransactionStatus::aborted) { return false; }
   return true;
 }
 
