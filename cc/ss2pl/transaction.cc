@@ -231,7 +231,8 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
     }
 
     Status rstat = read_internal(s, itr->body_.get_key(), itr);
-    if (rstat != Status::OK) return rstat;
+    if(rstat == Status::ERROR_LOCK_FAILED) return Status::ERROR_LOCK_FAILED;
+    if(rstat == Status::WARN_NOT_FOUND) continue;
     result.emplace_back(&(read_set_.back().body_));
   }
 
