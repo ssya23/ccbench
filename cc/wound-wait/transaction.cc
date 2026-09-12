@@ -142,7 +142,7 @@ bool TxExecutor::commit() {
 		      break;
 		    }
 		    case OpType::INSERT: {
-          tuple->delete_flag = false;
+          tuple->committed_record = true;
 		      break;
 		    }
 		    case OpType::DELETE: {
@@ -264,6 +264,11 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
         tuple->lock_.latch_unlock(rcounter);
         return LockResult::ABORTED;
 
+      }else if(woundresult == LockResult::NOT_FOUND){
+        rcounter = 0;
+        tuple->lock_.latch_unlock(rcounter);
+        return LockResult::NOT_FOUND;
+
       }else if(woundresult == LockResult::SUCCESS){
         rcounter = 1;
         tuple->owners[thid_] = local_timestamp;
@@ -328,12 +333,12 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
     int rcounter = itr->lock_.latch_lock();
     if(itr->delete_flag == true){
       itr->lock_.latch_unlock(rcounter);
-      return Status::WARN_NOT_FOUND;
+      continue;
     }
 
     LockResult readresult = read_internal(s, itr->body_.get_key(), itr, rcounter);
-    if(readresult == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
-    if (readresult == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
+    if(readresult == LockResult::NOT_FOUND) continue;
+    if(readresult == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
     result.emplace_back(&(read_set_.back().body_));
   }
 
@@ -443,11 +448,16 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
 
+        }else if(woundresult == LockResult::NOT_FOUND){
+          wcounter = 0;
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::WARN_NOT_FOUND;
+
         }else if(woundresult == LockResult::SUCCESS){
           tuple->owners[thid_] = local_timestamp;
           wcounter = -1;
           acquired = true;
-        
+
         }else if(woundresult == LockResult::FAILED){}
 
       }else if (wcounter >= 1) wcounter = wound_readlock(tuple, wcounter);
@@ -492,9 +502,10 @@ Status TxExecutor::insert(Storage s, std::string_view key, TupleBody&& body) {
   if (tuple != nullptr) { return Status::WARN_ALREADY_EXISTS; }
 
   tuple = new Tuple();
-  tuple->delete_flag = true; //wound-waitでは他のthreadによってTXがabortされLockを外される可能性がある.その際にInsertされたrecordは存在してはいけないためdelete_flag=trueにしておく.commit時にdelete_flag=falseに戻す
   tuple->init(std::move(body));
   tuple->owners[this->thid_] = local_timestamp;
+  // delete_flag/committed_recordはデフォルトのfalseのまま. 可視性はownersのロックのみで守る(ss2plと同様).
+  // commit()でcommitted_record=trueにする. wound_writelockがcommitted_record==falseのままこの行をwoundした場合はdelete_flag=trueにする.
 
   Status stat = Masstrees[get_storage(s)].insert_value(key, tuple);
   if (stat == Status::WARN_ALREADY_EXISTS) {
@@ -590,7 +601,12 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         if(woundresult == LockResult::ABORTED){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
-        
+
+        }else if(woundresult == LockResult::NOT_FOUND){
+          wcounter = 0;
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::WARN_NOT_FOUND;
+
         }else if(woundresult == LockResult::SUCCESS){
           wcounter = -1;
           tuple->owners[thid_] = local_timestamp;
@@ -600,7 +616,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       else if (wcounter >= 1){
         wcounter = wound_readlock(tuple, wcounter);
       }
-      
+
       if (!acquired)this->wait_entry.insertInto(tuple, local_timestamp);
     }
 
@@ -857,6 +873,10 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
       if (!AllExecutors[i]->status_.compare_exchange_strong(expected, TransactionStatus::aborted,memory_order_acq_rel, memory_order_acquire)) {
         if(expected == TransactionStatus::aborted){
           tuple->owners[i] = -1; //ownersには値が登録されている.ということはLockもまだ解放されていないということが言える.
+          if (!tuple->committed_record) {
+            tuple->delete_flag = true;
+            return LockResult::NOT_FOUND;
+          }
           return LockResult::SUCCESS;
         }
 
@@ -865,6 +885,10 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
 
       }else{// CASに成功!!
         tuple->owners[i] = -1;
+        if (!tuple->committed_record) {
+          tuple->delete_flag = true;
+          return LockResult::NOT_FOUND;
+        }
         return LockResult::SUCCESS;
       }
       

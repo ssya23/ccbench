@@ -18,6 +18,7 @@ public:
   TupleBody body_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
+  bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
   int owners[64]; //thread数によっては変更する必要がある.
 
   Tuple() {
@@ -28,6 +29,7 @@ public:
   void init([[maybe_unused]] size_t thid, TupleBody&& body,
             [[maybe_unused]] void* p) {
     body_ = std::move(body);
+    committed_record = true;
   }
   // insert()から呼ばれる
   void init(TupleBody&& body) {
