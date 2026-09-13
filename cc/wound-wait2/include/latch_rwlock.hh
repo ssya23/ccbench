@@ -1,21 +1,12 @@
 #pragma once
 
 #include <atomic>
-#include <unistd.h>
-#include <sys/syscall.h>
 
 #include "../../../include/rwlock.hh"
 
 class LatchableRWLock : public ReaderWriteLock {
 public:
   static constexpr int kLatched = -2;
-
-  // デバッグ用: 最後にlatch_lock()に成功した/latch_unlock()した場所を記録する.
-  // latch_unlock()を呼び忘れるバグを特定するための一時的な計測.
-  std::atomic<void*> last_lock_site{nullptr};
-  std::atomic<pid_t> last_lock_tid{0};
-  std::atomic<void*> last_unlock_site{nullptr};
-  std::atomic<pid_t> last_unlock_tid{0};
 
   /**
    * この関数自体はlatch（排他）を取ることだけを目的としている。
@@ -34,16 +25,12 @@ public:
               expected, kLatched,
               std::memory_order_acq_rel,
               std::memory_order_acquire)) {
-        last_lock_site.store(__builtin_return_address(0), std::memory_order_relaxed);
-        last_lock_tid.store(static_cast<pid_t>(syscall(SYS_gettid)), std::memory_order_relaxed);
         return expected;
       }
     }
   }
 
   void latch_unlock(int new_value) {
-    last_unlock_site.store(__builtin_return_address(0), std::memory_order_relaxed);
-    last_unlock_tid.store(static_cast<pid_t>(syscall(SYS_gettid)), std::memory_order_relaxed);
     counter.store(new_value, std::memory_order_release);
   }
 };
