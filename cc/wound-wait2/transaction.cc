@@ -1075,6 +1075,18 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
           }
           tuple->lock_.latch_unlock(result);
           return LockResult::SUCCESS;
+        }else if(woundresult == LockResult::NOT_FOUND){
+          this->wait_entry.removeFrom(tuple);
+          if (tuple->waiters_head == nullptr) {
+            for (uint32_t i = 0; i < TotalThreadNum; i++) {
+              if(tuple->owners[i] != -1) {
+                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+                break;
+              }
+            }
+          }
+          tuple->lock_.latch_unlock(result);
+          return LockResult::NOT_FOUND;
         }else if(woundresult == LockResult::FAILED){
           tuple->owner_older = true;
           tuple->lock_.latch_unlock(result);
@@ -1233,6 +1245,18 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
           tuple->owner_older = true;
           tuple->lock_.latch_unlock(result);
           return LockResult::SUCCESS;
+        }else if(woundresult == LockResult::NOT_FOUND){
+          this->wait_entry.removeFrom(tuple);
+          if (tuple->waiters_head == nullptr) {
+            for (uint32_t i = 0; i < TotalThreadNum; i++) {
+              if (tuple->owners[i] != -1) {
+                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+                break;
+              }
+            }
+          }
+          tuple->lock_.latch_unlock(result);
+          return LockResult::NOT_FOUND;
         }else if(woundresult == LockResult::FAILED){
           tuple->owner_older = true;
           tuple->lock_.latch_unlock(result);
