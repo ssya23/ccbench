@@ -1319,7 +1319,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
     //expected >= 1
     //headのtimestampよりもLockを取得しているTXのtimestampの方が小さいと保証されていない and サイクルの最小値になりうる.
-    }else if(!tuple->owner_older && (this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr)){
+    // upgrade時はheadに並ぶ際に自分自身も現在ownerとしてwaiter_count_を+1されているため,
+    // 自分自身の分の+1を差し引いて判定する(> 1).
+    }else if(!tuple->owner_older && (this->waiter_count_.load() > 1 || this->wait_entry.next != nullptr)){
       
       int result = tuple->lock_.latch_lock();
 
