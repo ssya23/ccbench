@@ -22,7 +22,7 @@ public:
   int owners[32]; //thread数によっては変更する必要がある.
 
   Tuple() {
-    for (int i = 0; i < 64; ++i) owners[i] = -1;
+    for (int i = 0; i < 32; ++i) owners[i] = -1;
   }
 
   //ベンチマーク開始前の初期データ投入（DBの一括構築）時
