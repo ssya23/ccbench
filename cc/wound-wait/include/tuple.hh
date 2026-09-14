@@ -19,7 +19,7 @@ public:
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
-  int owners[64]; //thread数によっては変更する必要がある.
+  int owners[32]; //thread数によっては変更する必要がある.
 
   Tuple() {
     for (int i = 0; i < 64; ++i) owners[i] = -1;
