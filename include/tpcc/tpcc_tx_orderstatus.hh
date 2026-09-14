@@ -30,8 +30,8 @@ bool get_order_key_by_customer_id(TxExecutor& tx, uint16_t w_id, uint8_t d_id,
   Status status = tx.scan(Storage::OrderSecondary, left_key.view(), false,
                           right_key.view(), true, result, 1);
   if (status != Status::OK || tx.status_ == TransactionStatus::aborted) {
-    dump(tx.thid_,
-         "cannot get order ID by scanning order-secondary with customer ID");
+    // dump(tx.thid_,
+    //      "cannot get order ID by scanning order-secondary with customer ID");
     return false;
   }
   if (result.size() != 1) ERR;
