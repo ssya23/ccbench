@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 
 #include "../../../include/cache_line_size.hh"
@@ -20,11 +21,13 @@ public:
   bool delete_flag = false;
   bool owner_older = false; // 現在の所有者(群)がheadより古いと確定しているか
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
-  int owners[64]; //thread数によっては変更する必要がある.
+  uint64_t owners_bitmap = 0;
 
-  Tuple() {
-    for (int i = 0; i < 64; ++i) owners[i] = -1;
-  }
+  Tuple() = default;
+
+  bool has_owner(int thid) const { return (owners_bitmap >> thid) & 1ULL; }
+  void add_owner(int thid) { owners_bitmap |= (1ULL << thid); }
+  void del_owner(int thid) { owners_bitmap &= ~(1ULL << thid); }
 
   //ベンチマーク開始前の初期データ投入（DBの一括構築）時
   void init([[maybe_unused]] size_t thid, TupleBody&& body,

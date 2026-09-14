@@ -31,6 +31,10 @@ void chkArg() {
   if (FLAGS_rratio > 100) { ERR; }
 
   TotalThreadNum = FLAGS_thread_num;
+  if (TotalThreadNum > 64) {
+    cout << "thread_num must be <= 64 (Tuple::owners_bitmap is a 64-bit word)" << endl;
+    ERR;
+  }
   AllExecutors.resize(TotalThreadNum, nullptr); 
 
   if (FLAGS_clocks_per_us < 100) {
