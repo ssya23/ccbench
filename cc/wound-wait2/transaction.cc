@@ -1264,6 +1264,16 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 
       }else if(result >= 1){
         result = wound_readlock(tuple, result);
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+          this->wait_entry.removeFrom(tuple);
+          if (tuple->waiters_head == nullptr) {
+            for (uint32_t i = 0; i < TotalThreadNum; i++) {
+              if (tuple->owners[i] != -1) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+            }
+          }
+          tuple->lock_.latch_unlock(result);
+          return LockResult::ABORTED;
+        }
         tuple->owner_older = true;
 
         if(result == 0){
@@ -1388,6 +1398,16 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         return LockResult::SUCCESS;
       }else if(result > 1){
         result = wound_readlock(tuple, result);
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+          this->wait_entry.removeFrom(tuple);
+          if (tuple->waiters_head == nullptr) {
+            for (uint32_t i = 0; i < TotalThreadNum; i++) {
+              if (tuple->owners[i] != -1) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            }
+          }
+          tuple->lock_.latch_unlock(result);
+          return LockResult::ABORTED;
+        }
         tuple->owner_older = true;
         if(result == 1){
           result = -1;
