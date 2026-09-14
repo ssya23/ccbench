@@ -166,7 +166,7 @@ bool insert_order(TxExecutor& tx, uint32_t o_id, uint8_t d_id, uint16_t w_id,
   if (stat == Status::WARN_ALREADY_EXISTS ||
       tx.status_ == TransactionStatus::aborted) {
     NewOrderAbortInsertOrder.fetch_add(1, std::memory_order_relaxed);
-    dump(tx.thid_, "insert order failed");
+    // dump(tx.thid_, "insert order failed");
     return false;
   }
   SimpleKey<16> o_sec_key;
@@ -176,7 +176,7 @@ bool insert_order(TxExecutor& tx, uint32_t o_id, uint8_t d_id, uint16_t w_id,
   if (stat == Status::WARN_ALREADY_EXISTS ||
       tx.status_ == TransactionStatus::aborted) {
     NewOrderAbortInsertOrderSecondary.fetch_add(1, std::memory_order_relaxed);
-    dump(tx.thid_, "insert order-secondary failed");
+    // dump(tx.thid_, "insert order-secondary failed");
     return false;
   }
   return true;
