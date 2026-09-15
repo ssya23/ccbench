@@ -57,10 +57,8 @@ void TxExecutor::abort() {
 		Tuple* tuple = (*itr).rcdptr_;
 	  int prev = tuple->lock_.latch_lock();
 
-    /* ReadSetのループでは,ownersを確認して自分のTSがowners[thid_]に-1が入っていたらownersとLockが解放されている. 
-     * owners[thid_]に自分のTSが入っていれば自分のLockがまだ解放されていない.counterをチェックしてcounter=-1ならskipする.
-     * それは, upgradeが発生していることになりWriteSetのループで解放する. 
-     * またこの時先にowenrsを確認している必要がある.なぜなら,自分がownersにいないとcounterの-1は自分が取得したWriteLockかどうか判定できない */
+    /* ReadSetのループでは,owners_bitmapを確認してロックをまだ保持していることを確認. 保持していれば,ロック(counter)を解放する. 
+     * counterをチェックして counter=-1 ならskipする. Upgradeが発生していることを意味し,WriteSetのループで解放する. */
       
 		if(tuple->has_owner(thid_)){ 
 			if(prev != -1){               
@@ -268,7 +266,8 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
           goto FINISH_READ_LOCK;
         }else if(woundresult == LockResult::FAILED) tuple->owner_older = true;
 
-      }else tuple->owner_older = false; // WoundしないままWaitする
+      // WoundしないままWaitする
+      }else tuple->owner_older = false; 
 
       // 自分が最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
       for (uint32_t i = 0; i < TotalThreadNum; i++) {

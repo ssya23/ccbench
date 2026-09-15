@@ -94,8 +94,6 @@ public:
   Status read_lock(Storage s, std::string_view key);
   Status write_lock(Storage s, std::string_view key);
 
-  void unlockList();
-
   void reconnoiter_begin();
   void reconnoiter_end();
 

@@ -20,13 +20,13 @@ public:
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
-  uint64_t owners_bitmap = 0;
+  uint64_t owners_bitmap = 0;    // ロックを保持しているTXを管理するbitmap. bit=1になっていればそのTXのメタデータにアクセスしてtimestampの情報を得る.
 
   Tuple() = default;
 
-  bool has_owner(int thid) const { return (owners_bitmap >> thid) & 1ULL; }
-  void add_owner(int thid) { owners_bitmap |= (1ULL << thid); }
-  void del_owner(int thid) { owners_bitmap &= ~(1ULL << thid); }
+  bool has_owner(int thid) const { return (owners_bitmap >> thid) & 1ULL; } //>>は右シフト. & 1ULL:一番右のbitが1かどうか確認できる (e.g.11000001 & 00000001 -> 00000001 (true))
+  void add_owner(int thid) { owners_bitmap |= (1ULL << thid); }             //<<は左シフト. 00000001をthid分だけ左シフトする.そしてORによって自分のbitを立てる
+  void del_owner(int thid) { owners_bitmap &= ~(1ULL << thid); }            //~(1ULL << thid)自分のbitを立てて反転, &=でbitを下げる
 
   //ベンチマーク開始前の初期データ投入（DBの一括構築）時
   void init([[maybe_unused]] size_t thid, TupleBody&& body,
@@ -53,8 +53,8 @@ inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
   this->next = current;
   this->prev = prev_entry;
 
-  if (current != nullptr) current->prev = this;
-  if (prev_entry != nullptr) prev_entry->next = this;
+  if (current != nullptr) current->prev = this;       //自分の後ろのEntryに自分のPointerを追加
+  if (prev_entry != nullptr) prev_entry->next = this; 
   else {
     if (current != nullptr) current->is_head.store(false, std::memory_order_relaxed);
     tuple->waiters_head = this;
@@ -70,6 +70,7 @@ inline void WaitEntry::removeFrom(Tuple* tuple) {
     tuple->waiters_head = this->next;
     if (this->next != nullptr) this->next->is_head.store(true, std::memory_order_release);
   }
+
   if (this->next != nullptr) {
     this->next->prev = this->prev;
   }
