@@ -10,6 +10,6 @@ struct WaitEntry { // WaitListの1エントリ。
   WaitEntry* next = nullptr;
   WaitEntry* prev = nullptr;
 
-  void insertInto(Tuple* tuple, int my_ts);　// 自分のWaitEntryをWaitListにSortされた順で挿入する
+  void insertInto(Tuple* tuple, int my_ts); // 自分のWaitEntryをWaitListにSortされた順で挿入する
   void removeFrom(Tuple* tuple);// WaitListから外す
 };
