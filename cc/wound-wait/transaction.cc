@@ -391,17 +391,16 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         goto FINISH_WRITE;
 
       }else if(upcounter >= 1){
-        this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
-        (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
 
         if(this->status_ == TransactionStatus::aborted){
-          int r = (*rItr).rcdptr_->lock_.latch_lock();
-          this->wait_entry.removeFrom((*rItr).rcdptr_);
-          (*rItr).rcdptr_->lock_.latch_unlock(r);
+          (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
         
         }
+
+        this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
+        (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
         if (result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;

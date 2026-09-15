@@ -421,14 +421,13 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         //Upgradeができない. "upcounter 1以上"になっている.
         }else if(this->waiter_count_.load() > 0){
-          this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
           //wound_readlock()の結果自分がabortされる可能性がある. それをここで検出
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            this->wait_entry.removeFrom(utuple);
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
+          this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
           //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
@@ -456,13 +455,12 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         //upcounter>1でWriteLock取得ができない.
         }else{
-          this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            this->wait_entry.removeFrom(utuple);
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
+          this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
         }
 
@@ -693,13 +691,12 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
         //Upgradeができない. "upcounter > 1"になっている.
         }else if(this->waiter_count_.load() > 0){
-          this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            this->wait_entry.removeFrom(utuple);
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
+          this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
           //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
           for (uint32_t i = 0; i < TotalThreadNum; i++) {
@@ -727,13 +724,12 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
         //upcounter>1でWriteLock取得ができない.
         }else{
-          this->wait_entry.insertInto(utuple, local_timestamp);
           upcounter = wound_readlock(utuple, upcounter);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            this->wait_entry.removeFrom(utuple);
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
+          this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
         }
 
