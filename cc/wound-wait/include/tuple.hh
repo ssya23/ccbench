@@ -56,19 +56,27 @@ inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
 
   if (current != nullptr) current->prev = this;
   if (prev_entry != nullptr) prev_entry->next = this;
-  else tuple->waiters_head = this;
+  else {
+    if (current != nullptr) current->is_head.store(false, std::memory_order_relaxed);
+    tuple->waiters_head = this;
+    this->is_head.store(true, std::memory_order_release);
+  }
 }
 
 inline void WaitEntry::removeFrom(Tuple* tuple) {
   if (this->prev != nullptr) {
     this->prev->next = this->next;
   }
-  else tuple->waiters_head = this->next;
+  else {
+    tuple->waiters_head = this->next;
+    if (this->next != nullptr) this->next->is_head.store(true, std::memory_order_release);
+  }
   if (this->next != nullptr) {
     this->next->prev = this->prev;
   }
   this->next = nullptr;
   this->prev = nullptr;
+  this->is_head.store(false, std::memory_order_relaxed);
 
   this->owner_tuple = nullptr;
 }

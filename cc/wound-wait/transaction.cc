@@ -727,16 +727,16 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       return LockResult::ABORTED;
 
     }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       tuple->lock_.latch_unlock(r);
       return LockResult::NOT_FOUND;
 
-    }
-    if (tuple->waiters_head != &this->wait_entry) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
-      continue;
     }
 
     // これ以降はheadの操作
@@ -780,16 +780,16 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       return LockResult::ABORTED;
 
     }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       tuple->lock_.latch_unlock(r);
       return LockResult::NOT_FOUND;
 
-    }
-    if (tuple->waiters_head != &this->wait_entry) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
-      continue;
     }
     
     // headの操作
@@ -831,17 +831,17 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       return LockResult::ABORTED;
 
     }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
+
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       tuple->lock_.latch_unlock(r);
       return LockResult::NOT_FOUND;
 
-    }
-
-    if (tuple->waiters_head != &this->wait_entry) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
-      continue;
     }
 
     // headの操作
