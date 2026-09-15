@@ -462,7 +462,13 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         }else if(woundresult == LockResult::FAILED){}
 
-      }else if (wcounter >= 1) wcounter = wound_readlock(tuple, wcounter);
+      }else if (wcounter >= 1){
+        wcounter = wound_readlock(tuple, wcounter);
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::ERROR_LOCK_FAILED;
+        }
+      }
       
       if(!acquired)this->wait_entry.insertInto(tuple, local_timestamp);
     }
@@ -556,8 +562,14 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         goto FINISH_DELETE;
 
       }else if(upcounter >= 1){
-        this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
+
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+          (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
+          return Status::ERROR_LOCK_FAILED;
+        }
+
+        this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
@@ -617,6 +629,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       }
       else if (wcounter >= 1){
         wcounter = wound_readlock(tuple, wcounter);
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::ERROR_LOCK_FAILED;
+        }
       }
 
       if (!acquired)this->wait_entry.insertInto(tuple, local_timestamp);
