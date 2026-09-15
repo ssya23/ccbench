@@ -10,10 +10,8 @@ class Tuple;  // 前方宣言のみ。本体はtuple.hhの末尾(Tuple定義の�
 struct WaitEntry {
   std::atomic<bool> is_head{false};
   int ts;
-  bool waiting = false;
   WaitEntry* next = nullptr;
   WaitEntry* prev = nullptr;
-  Tuple* owner_tuple = nullptr;
 
   // 自分自身を、tsの昇順でtupleの待ち行列に挿入する。
   // 呼び出し側はtupleのlatchを保持していること。

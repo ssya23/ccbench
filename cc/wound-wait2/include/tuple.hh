@@ -44,7 +44,6 @@ public:
 
 inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
   this->ts = my_ts;
-  this->owner_tuple = tuple;
   WaitEntry* current = tuple->waiters_head;
   WaitEntry* prev_entry = nullptr;
 
@@ -78,6 +77,4 @@ inline void WaitEntry::removeFrom(Tuple* tuple) {
   this->next = nullptr;
   this->prev = nullptr;
   this->is_head.store(false, std::memory_order_relaxed);
-
-  this->owner_tuple = nullptr;
 }
