@@ -5,6 +5,8 @@
 
 #include <atomic>
 #include <bit>
+#include <sched.h>
+#include <xmmintrin.h>
 
 #include "../../include/backoff.hh"
 #include "../../include/debug.hh"
@@ -716,6 +718,7 @@ void TxExecutor::leaderWork() {
 }
 
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
+	uint32_t spin_ = 0;
 	while(true){
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
@@ -731,7 +734,10 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       return LockResult::NOT_FOUND;
 
     }
-    if (tuple->waiters_head != &this->wait_entry) continue;
+    if (tuple->waiters_head != &this->wait_entry) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
 
     // これ以降はheadの操作
     int expected = tuple->lock_.counter.load(memory_order_acquire);
@@ -760,11 +766,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         tuple->lock_.latch_unlock(result);
 
       }
-    }
+    } else _mm_pause();
   }
 }
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
+	uint32_t spin_ = 0;
 	while(true){
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
@@ -780,7 +787,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       return LockResult::NOT_FOUND;
 
     }
-    if (tuple->waiters_head != &this->wait_entry) continue;
+    if (tuple->waiters_head != &this->wait_entry) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
     
     // headの操作
     int expected = tuple->lock_.counter.load(memory_order_acquire);
@@ -807,11 +817,12 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       }else{
         tuple->lock_.latch_unlock(result);
       }
-    }
+    } else _mm_pause();
   }
 }
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
+	uint32_t spin_ = 0;
 	while(true){
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
@@ -828,7 +839,10 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
     }
 
-    if (tuple->waiters_head != &this->wait_entry) continue;
+    if (tuple->waiters_head != &this->wait_entry) {
+      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      continue;
+    }
 
     // headの操作
     int expected = tuple->lock_.counter.load(memory_order_acquire);
@@ -857,7 +871,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       }else{
         tuple->lock_.latch_unlock(result);
       }
-    }
+    } else _mm_pause();
   }
 }
 
