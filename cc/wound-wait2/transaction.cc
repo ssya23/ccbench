@@ -270,8 +270,8 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
       }else tuple->owner_older = false; 
 
       // 自分が最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-      for (uint32_t i = 0; i < TotalThreadNum; i++) {
-        if(tuple->has_owner(i)){ AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel); break;}
+      if (tuple->owners_bitmap != 0) {
+        AllExecutors[std::countr_zero(tuple->owners_bitmap)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
       }
     }
 
@@ -429,16 +429,16 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
           //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(utuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel); 
+          for (uint64_t bits = utuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
           }
 
         //必ずしもwoundしなくてもいい.
         }else{
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = false; // WoundせずにWaitする
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(utuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+          for (uint64_t bits = utuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
           }
         }
 
@@ -540,14 +540,8 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
     // 自分が最初のwaiterになる → 現在のLock所有者のwaiter_count_を上げる
     if(!acquired){
-      int expected = (wcounter == -1) ? 1 : wcounter; // wcounterが-1ならexpectedに1を入れそれ以外ならwcounterの値を入れる
-      int found = 0;
-      for (uint32_t i = 0; i < TotalThreadNum; i++) {
-        if (tuple->has_owner(i)) {
-          AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
-          found++;
-          if(found == expected) break;
-        }
+      for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+        AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
@@ -698,16 +692,16 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = true;
           //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(utuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+          for (uint64_t bits = utuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
           }
 
         }else{
           //必ずしもwoundしなくてもいい.// WoundせずにWaitする
           this->wait_entry.insertInto(utuple, local_timestamp);
           utuple->owner_older = false; 
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(utuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
+          for (uint64_t bits = utuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
           }
         }
 
@@ -811,14 +805,8 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
     if(!acquired){
       // 自分が最初のwaiterになる → 現在のLock所有者のwaiter_count_を上げる
-      int expected = (wcounter == -1) ? 1 : wcounter; // wcounterが-1ならexpectedに1を入れそれ以外ならwcounterの値を入れる
-      int found = 0;
-      for (uint32_t i = 0; i < TotalThreadNum; i++) {
-        if (tuple->has_owner(i)) {
-          AllExecutors[i]->waiter_count_.fetch_add(1, memory_order_acq_rel);
-          found++;
-          if(found == expected) break;
-        }
+      for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+        AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, memory_order_acq_rel);
       }
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
@@ -960,8 +948,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if(tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); 
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -978,8 +966,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if(tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); 
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -995,8 +983,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(tuple->delete_flag == true){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr){
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); 
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1015,9 +1003,10 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         if(tuple->waiters_head != nullptr) {
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
         } else {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
-            if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            const int i = std::countr_zero(bits);
+            if (i == thid_) continue;
+            AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
 		    result ++;
@@ -1033,8 +1022,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(tuple->delete_flag == true){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr){
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); 
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1053,11 +1042,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         if(woundresult == LockResult::ABORTED) {
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if(tuple->has_owner(i)) {
-                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
-                break;
-              }
+            if (tuple->owners_bitmap != 0) {
+              AllExecutors[std::countr_zero(tuple->owners_bitmap)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1070,9 +1056,10 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
           if(tuple->waiters_head != nullptr) {
             this->waiter_count_.fetch_add(1, memory_order_acq_rel);
           } else {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (static_cast<int>(i) == thid_) continue;
-              if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              const int i = std::countr_zero(bits);
+              if (i == thid_) continue;
+              AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1080,11 +1067,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         }else if(woundresult == LockResult::NOT_FOUND){
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if(tuple->has_owner(i)) {
-                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
-                break;
-              }
+            if (tuple->owners_bitmap != 0) {
+              AllExecutors[std::countr_zero(tuple->owners_bitmap)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1100,9 +1084,10 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
         if (tuple->waiters_head != nullptr) {
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
         } else {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
-            if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            const int i = std::countr_zero(bits);
+            if (i == thid_) continue;
+            AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1120,8 +1105,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1137,8 +1122,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1154,8 +1139,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if(tuple->delete_flag == true){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1174,9 +1159,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         if (tuple->waiters_head != nullptr) {
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
         } else {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
-            if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            const int i = std::countr_zero(bits);
+            if (i == thid_) continue;
+            AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->owner_older = true;
@@ -1192,8 +1178,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if(tuple->delete_flag == true){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1212,9 +1198,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         if (tuple->waiters_head != nullptr) {
           this->waiter_count_.fetch_add(1, memory_order_acq_rel);
         } else {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (static_cast<int>(i) == thid_) continue;
-            if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            const int i = std::countr_zero(bits);
+            if (i == thid_) continue;
+            AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->owner_older = true;
@@ -1227,11 +1214,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         if (woundresult == LockResult::ABORTED) {
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (tuple->has_owner(i)) {
-                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
-                break;
-              }
+            if (tuple->owners_bitmap != 0) {
+              AllExecutors[std::countr_zero(tuple->owners_bitmap)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1243,9 +1227,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
           if(tuple->waiters_head != nullptr) {
             this->waiter_count_.fetch_add(1, memory_order_acq_rel);
           } else {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (static_cast<int>(i) == thid_) continue;
-              if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              const int i = std::countr_zero(bits);
+              if (i == thid_) continue;
+              AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->owner_older = true;
@@ -1254,11 +1239,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         }else if(woundresult == LockResult::NOT_FOUND){
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (tuple->has_owner(i)) {
-                AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
-                break;
-              }
+            if (tuple->owners_bitmap != 0) {
+              AllExecutors[std::countr_zero(tuple->owners_bitmap)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1273,8 +1255,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1289,9 +1271,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
           if (tuple->waiters_head != nullptr) {
             this->waiter_count_.fetch_add(1, memory_order_acq_rel);
           } else {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (static_cast<int>(i) == thid_) continue;
-              if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              const int i = std::countr_zero(bits);
+              if (i == thid_) continue;
+              AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1310,8 +1293,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1327,8 +1310,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head == nullptr) {
-        for (uint32_t i = 0; i < TotalThreadNum; i++) {
-          if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+        for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+          AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
         }
       }
       tuple->lock_.latch_unlock(r);
@@ -1345,8 +1328,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       if(this->status_ == TransactionStatus::aborted){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1363,8 +1346,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         this->wait_entry.removeFrom(tuple);
         tuple->owner_older = true;
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1382,8 +1365,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
       if(this->status_ == TransactionStatus::aborted){
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if (tuple->has_owner(i)) { AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel); }
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1400,8 +1383,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         tuple->owner_older = true;
         this->wait_entry.removeFrom(tuple);
         if (tuple->waiters_head == nullptr) {
-          for (uint32_t i = 0; i < TotalThreadNum; i++) {
-            if(tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+          for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+            AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
           }
         }
         tuple->lock_.latch_unlock(result);
@@ -1411,8 +1394,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
@@ -1423,8 +1406,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
           result = -1;
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
-            for (uint32_t i = 0; i < TotalThreadNum; i++) {
-              if (tuple->has_owner(i)) AllExecutors[i]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
+            for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+              AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, memory_order_acq_rel);
             }
           }
           tuple->lock_.latch_unlock(result);
