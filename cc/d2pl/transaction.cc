@@ -51,8 +51,6 @@ void TxExecutor::abort() {
   read_set_.clear();
   write_set_.clear();
 
-  ++result_->local_abort_counts_;
-
 #if BACK_OFF
 #if ADD_ANALYSIS
   uint64_t start(rdtscp());
