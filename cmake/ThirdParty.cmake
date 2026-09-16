@@ -101,7 +101,10 @@ set(MI_BUILD_STATIC ON  CACHE BOOL "" FORCE)
 set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
 set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
-set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)
+# MI_OVERRIDE=ON にすると mimalloc が malloc/free/operator new を定義する。
+# OFF のままだと mimalloc はビルド・リンクされるだけで一度も呼ばれず、
+# 全ての確保が glibc malloc に行く (TPC-C NewOrder で全命令の約 40%)。
+set(MI_OVERRIDE     ON  CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
   mimalloc

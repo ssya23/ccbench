@@ -35,8 +35,21 @@ function(ccbench_add_protocol name)
 
     target_link_libraries(${target} PRIVATE
       ccbench_common
-      ccbench::masstree
-      ccbench::mimalloc)
+      ccbench::masstree)
+
+    # mimalloc の malloc/free/operator new は libc 側で既に解決されるため、
+    # 通常の静的リンクではアーカイブからオブジェクトが引き出されず、アロケータが
+    # 未使用のまま残る。--whole-archive で強制的に取り込む。
+    # 実測 (TPC-C wh=1 th=1): NewOrder のみ 35.8k -> 45.7k tps (+28%)、
+    # NewOrder+Payment 61.8k -> 84.7k tps (+37%)。
+    # CC-orthogonal: 全プロトコルに一律に効くので相対比較は歪めない。
+    # --whole-archive は GNU ld / lld の構文なので Linux ビルドに限定する。
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_libraries(${target} PRIVATE
+        -Wl,--whole-archive ccbench::mimalloc -Wl,--no-whole-archive)
+    else()
+      target_link_libraries(${target} PRIVATE ccbench::mimalloc)
+    endif()
 
     target_compile_definitions(${target} PRIVATE
       ${_universal_defs}
