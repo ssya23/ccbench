@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <thread>
@@ -59,6 +60,7 @@
 #include "include/tx_executor_concept.hh"
 #include "include/util.hh"
 
+#include <cstdlib>
 #include <map>
 #include <string>
 
@@ -305,6 +307,33 @@ void run(std::size_t thread_num, const RunnerOptions& opts,
   const long double actual_extime = std::round(
       (end_tsc - start_tsc) /
       (static_cast<long double>(FLAGS_clocks_per_us) * ::powl(10.0L, 6.0L)));
+
+  /* スレッドごとの commit/abort を出す (診断用)。
+   * 環境変数 CCBENCH_PER_THREAD_RESULT が設定されているときだけ出力するので、
+   * 通常の出力フォーマットは変わらない。
+   *   CCBENCH_PER_THREAD_RESULT=1 ./tpcc_ss2pl.exe ...
+   * no-wait が wh=1 で示す二峰性が「一部スレッドの飢餓」によるものかを
+   * 確認するために入れた。commit が全スレッドで均等なら飢餓ではない。
+   * addLocalAllResult() は local_* を読んで total_* に足すので、この時点では
+   * CCBenchResults[i] の local_* はまだ各スレッドの生の値である。 */
+  if (std::getenv("CCBENCH_PER_THREAD_RESULT") != nullptr) {
+    std::cout << "Per-thread results:" << std::endl;
+    std::cout << "  thid\tcommits\taborts";
+    if (opts.display_per_tx) {
+      for (const auto& t : TxTypes) std::cout << "\t" << t.second;
+    }
+    std::cout << std::endl;
+    for (std::size_t i = 0; i < thread_num; ++i) {
+      std::cout << "  " << i << "\t" << CCBenchResults[i].local_commit_counts_
+                << "\t" << CCBenchResults[i].local_abort_counts_;
+      if (opts.display_per_tx) {
+        for (const auto& t : TxTypes) {
+          std::cout << "\t" << CCBenchResults[i].local_commit_counts_per_tx_[t.first];
+        }
+      }
+      std::cout << std::endl;
+    }
+  }
 
   for (std::size_t i = 0; i < thread_num; ++i) {
     CCBenchResults[0].addLocalAllResult(CCBenchResults[i]);
