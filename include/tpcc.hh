@@ -45,9 +45,10 @@ public:
     Query query;
     TPCCQuery::Option option;
 
-  RETRY:
+  NEWQUERY:
     query.generate(w_id, option);
 
+  RETRY:
     if (tx.isLeader()) { tx.leaderWork(); }
 
     if (loadAcquire(tx.quit_)) return;
@@ -96,6 +97,14 @@ public:
 #if ADD_ANALYSIS
       ++tx.result_->local_early_aborts_;
 #endif
+      /* rbk==1 の NewOrder は generate() が存在しない商品番号を作るので
+       * (tpcc_query.hh: items[ol_cnt-1].ol_i_id += max_items)、再実行しても
+       * Item テーブルは読み取り専用で行が増えないため永遠に失敗する。
+       * TPC-C 仕様の 1% intentional rollback、すなわちユーザ起因の中断なので
+       * 新しい query を引く。DBx1000 の RC=ERROR / ERMIA の RC_ABORT_USER を
+       * retry 対象から外しているのと同じ扱い。
+       * query は union なので、type の判定を短絡評価で先に置く必要がある。 */
+      if (query.type == TxType::NewOrder && query.new_order.rbk == 1) goto NEWQUERY;
       goto RETRY;
     }
 
