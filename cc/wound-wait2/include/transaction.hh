@@ -51,7 +51,7 @@ public:
 
   alignas(CACHE_LINE_SIZE) std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
   alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0; // 自分が保持しているタプルのうち、待ち行列が空でないものの数
-  alignas(CACHE_LINE_SIZE)  WaitEntry wait_entry;
+  alignas(CACHE_LINE_SIZE) WaitEntry wait_entry;
 
   TxExecutor(int thid, Result* res, const bool& quit)
       : thid_(thid), result_(res), backoff_(FLAGS_clocks_per_us), quit_(quit) {

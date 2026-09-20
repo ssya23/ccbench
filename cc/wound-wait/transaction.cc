@@ -5,7 +5,6 @@
 
 #include <atomic>
 #include <bit>
-#include <sched.h>
 #include <xmmintrin.h>
 
 #include "../../include/backoff.hh"
@@ -733,7 +732,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     }
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      _mm_pause();
       continue;
     }
 
@@ -785,7 +784,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
     }
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      _mm_pause();
       continue;
     }
 
@@ -835,7 +834,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
     }
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      if ((++spin_ & 63) == 0) sched_yield(); else _mm_pause();
+      _mm_pause();
       continue;
     }
 
