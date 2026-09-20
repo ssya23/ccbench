@@ -16,12 +16,12 @@ using namespace std;
 class Tuple {
 public:
   alignas(CACHE_LINE_SIZE) LatchableRWLock lock_;
-  TupleBody body_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool owner_older = false; // 現在の所有者(群)がheadより古いと確定しているか
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
   uint64_t owners_bitmap = 0;
+  alignas(CACHE_LINE_SIZE) TupleBody body_;
 
   Tuple() = default;
 

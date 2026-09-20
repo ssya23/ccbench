@@ -16,11 +16,11 @@ using namespace std;
 class Tuple {
 public:
   alignas(CACHE_LINE_SIZE) LatchableRWLock lock_;
-  TupleBody body_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
   uint64_t owners_bitmap = 0;    // ロックを保持しているTXを管理するbitmap. bit=1になっていればそのTXのメタデータにアクセスしてtimestampの情報を得る.
+  alignas(CACHE_LINE_SIZE) TupleBody body_;
 
   Tuple() = default;
 
