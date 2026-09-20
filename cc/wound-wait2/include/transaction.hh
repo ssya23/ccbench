@@ -34,31 +34,27 @@ extern void writeValGenerator(char* writeVal, size_t val_size, size_t thid);
 class TxExecutor {
 public:
   alignas(CACHE_LINE_SIZE) int thid_;
-  std::vector<ReaderWriteLock*> r_lock_list_;
-  std::vector<ReaderWriteLock*> w_lock_list_;
-  std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
-  std::atomic<int> waiter_count_ = 0; // 自分が保持しているタプルのうち、待ち行列が非空のものの数
+  int local_timestamp;
   Result* result_;
   Backoff backoff_;
+  alignas(CACHE_LINE_SIZE)
   std::deque<SetElement<Tuple>> read_set_;
   std::deque<SetElement<Tuple>> write_set_;
   vector<Procedure> pro_set_;
   std::deque<Tuple*> gc_records_;
+  std::vector<ReaderWriteLock*> r_lock_list_;
+  std::vector<ReaderWriteLock*> w_lock_list_;
   const bool& quit_; // for thread termination control
-  int local_timestamp;
-  WaitEntry wait_entry;
-
   bool reconnoitering_ = false;
   bool is_ronly_ = false;
   bool is_batch_ = false;
 
+  alignas(CACHE_LINE_SIZE) std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
+  alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0; // 自分が保持しているタプルのうち、待ち行列が空でないものの数
+  alignas(CACHE_LINE_SIZE)  WaitEntry wait_entry;
+
   TxExecutor(int thid, Result* res, const bool& quit)
       : thid_(thid), result_(res), backoff_(FLAGS_clocks_per_us), quit_(quit) {
-    //    pro_set_.reserve(FLAGS_max_ope);
-    //    r_lock_list_.reserve(FLAGS_max_ope);
-    //    w_lock_list_.reserve(FLAGS_max_ope);
-    //
-    //    genStringRepeatedNumber(write_val_, VAL_SIZE, thid);
   }
 
   SetElement<Tuple>* searchReadSet(Storage s, std::string_view key);
