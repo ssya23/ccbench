@@ -19,6 +19,8 @@ public:
   uint64_t local_batch_commit_counts_ = 0;
   uint64_t local_commit_counts_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t local_abort_counts_per_tx_[MAX_TX_TYPE] = {0};
+  uint64_t local_abort_by_wound_per_tx_[MAX_TX_TYPE] = {0};
+  uint64_t local_abort_by_status_per_tx_[MAX_TX_TYPE] = {0};
   int64_t local_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t local_success_fw_ = 0;
 #if ADD_ANALYSIS
@@ -67,6 +69,8 @@ public:
   uint64_t total_batch_commit_counts_ = 0;
   uint64_t total_commit_counts_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_abort_counts_per_tx_[MAX_TX_TYPE] = {0};
+  uint64_t total_abort_by_wound_per_tx_[MAX_TX_TYPE] = {0};
+  uint64_t total_abort_by_status_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_success_fw_ = 0;
 #if ADD_ANALYSIS

@@ -55,45 +55,48 @@ public:
 
     tx.begin();
 
+    bool op_ok = true;
     switch (query.type) {
       case TxType::NewOrder:
-        if (!run_new_order<TxExecutor, TransactionStatus>(tx,
-                                                          &query.new_order)) {
-          tx.status_ = TransactionStatus::aborted;
-        }
+        op_ok =
+            run_new_order<TxExecutor, TransactionStatus>(tx, &query.new_order);
         break;
       case TxType::Payment:
-        if (!run_payment<TxExecutor, TransactionStatus, Tuple>(
-                tx, &query.payment, &hkg_)) {
-          tx.status_ = TransactionStatus::aborted;
-        }
+        op_ok = run_payment<TxExecutor, TransactionStatus, Tuple>(
+            tx, &query.payment, &hkg_);
         break;
       case TxType::OrderStatus:
-        if (!run_order_status<TxExecutor, TransactionStatus, Tuple>(
-                tx, &query.order_status)) {
-          tx.status_ = TransactionStatus::aborted;
-        }
+        op_ok = run_order_status<TxExecutor, TransactionStatus, Tuple>(
+            tx, &query.order_status);
         break;
       case TxType::Delivery:
-        if (!run_delivery<TxExecutor, TransactionStatus>(tx, &query.delivery)) {
-          tx.status_ = TransactionStatus::aborted;
-        }
+        op_ok = run_delivery<TxExecutor, TransactionStatus>(tx, &query.delivery);
         break;
       case TxType::StockLevel:
-        if (!run_stock_level<TxExecutor, TransactionStatus>(
-                tx, &query.stock_level)) {
-          tx.status_ = TransactionStatus::aborted;
-        }
+        op_ok = run_stock_level<TxExecutor, TransactionStatus>(
+            tx, &query.stock_level);
         break;
       default:
         ERR;
         break;
     }
 
+    /* run_*() が false を返す理由は 2 通りある。他スレッドに wound されて
+     * status_ が aborted になった場合と、操作が Status::OK 以外 (WARN_NOT_FOUND
+     * など) を返した場合。後者では status_ はまだ inflight なので、ここで
+     * aborted へ上書きする前に区別しておく。 */
+    const bool wounded = (tx.status_ == TransactionStatus::aborted);
+    if (!op_ok) tx.status_ = TransactionStatus::aborted;
+
     if (tx.status_ == TransactionStatus::aborted) {
       tx.abort();
       tx.result_->local_abort_counts_++;
       tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
+      if (wounded) {
+        tx.result_->local_abort_by_wound_per_tx_[get_tx_type(query.type)]++;
+      } else {
+        tx.result_->local_abort_by_status_per_tx_[get_tx_type(query.type)]++;
+      }
 #if ADD_ANALYSIS
       ++tx.result_->local_early_aborts_;
 #endif
@@ -113,6 +116,9 @@ public:
       if (tx.status_ == TransactionStatus::invalid) return;
       tx.result_->local_abort_counts_++;
       tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
+      /* commit() は status_ を inflight から committed へ CAS するだけなので、
+       * 失敗するのは他スレッドが aborted を書き込んだ場合に限られる。 */
+      tx.result_->local_abort_by_wound_per_tx_[get_tx_type(query.type)]++;
       goto RETRY;
     }
 
