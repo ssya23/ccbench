@@ -760,6 +760,7 @@ void Result::displayPerTxResult(std::map<uint32_t, std::string> tx_types) {
     std::cout << "    latency[us]: " << std::fixed << setprecision(2) << latency
               << std::endl;
   }
+  displayWoundMatrix(tx_types);
   std::cout << "  Summary: ";
   for (auto& [type, name] : tx_types) {
     std::cout << total_commit_counts_per_tx_[type] << ","
@@ -784,6 +785,39 @@ void Result::addLocalPerTxResult(const Result& other,
     total_abort_by_status_per_tx_[type] +=
         other.local_abort_by_status_per_tx_[type];
     total_wound_counts_per_tx_[type] += other.local_wound_counts_per_tx_[type];
+    for (auto& [victim, vname] : tx_types) {
+      total_wound_matrix_[type][victim] +=
+          other.local_wound_matrix_[type][victim];
+    }
     total_latency_per_tx_[type] += other.local_latency_per_tx_[type];
   }
+}
+
+void Result::displayWoundMatrix(std::map<uint32_t, std::string> tx_types) {
+  std::cout << "  Wound matrix (row = wounder, column = victim):" << std::endl;
+  std::cout << "    " << std::setw(12) << "";
+  for (auto& [victim, vname] : tx_types) {
+    std::cout << std::setw(13) << vname;
+  }
+  std::cout << std::setw(13) << "total" << std::endl;
+  for (auto& [wounder, wname] : tx_types) {
+    std::cout << "    " << std::setw(12) << wname;
+    uint64_t row = 0;
+    for (auto& [victim, vname] : tx_types) {
+      std::cout << std::setw(13) << total_wound_matrix_[wounder][victim];
+      row += total_wound_matrix_[wounder][victim];
+    }
+    std::cout << std::setw(13) << row << std::endl;
+  }
+  std::cout << "    " << std::setw(12) << "total";
+  uint64_t all = 0;
+  for (auto& [victim, vname] : tx_types) {
+    uint64_t col = 0;
+    for (auto& [wounder, wname] : tx_types) {
+      col += total_wound_matrix_[wounder][victim];
+    }
+    std::cout << std::setw(13) << col;
+    all += col;
+  }
+  std::cout << std::setw(13) << all << std::endl;
 }
