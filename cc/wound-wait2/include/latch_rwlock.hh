@@ -19,6 +19,7 @@ public:
     for (;;) {
       if (expected == kLatched) {
         expected = counter.load(std::memory_order_acquire);
+        _mm_pause();
         continue;
       }
       if (counter.compare_exchange_strong(
