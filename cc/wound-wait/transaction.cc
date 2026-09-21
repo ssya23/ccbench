@@ -721,7 +721,6 @@ void TxExecutor::leaderWork() {
 }
 
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
-	uint32_t spin_ = 0;
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
@@ -773,7 +772,6 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
-	uint32_t spin_ = 0;
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
@@ -823,7 +821,6 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
-	uint32_t spin_ = 0;
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
