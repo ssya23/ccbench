@@ -753,6 +753,8 @@ void Result::displayPerTxResult(std::map<uint32_t, std::string> tx_types) {
               << std::endl;
     std::cout << "      by status: " << total_abort_by_status_per_tx_[type]
               << std::endl;
+    std::cout << "    wounds issued: " << total_wound_counts_per_tx_[type]
+              << std::endl;
     std::cout << "    abort rate: " << std::fixed << setprecision(4) << rate
               << std::endl;
     std::cout << "    latency[us]: " << std::fixed << setprecision(2) << latency
@@ -781,6 +783,7 @@ void Result::addLocalPerTxResult(const Result& other,
         other.local_abort_by_wound_per_tx_[type];
     total_abort_by_status_per_tx_[type] +=
         other.local_abort_by_status_per_tx_[type];
+    total_wound_counts_per_tx_[type] += other.local_wound_counts_per_tx_[type];
     total_latency_per_tx_[type] += other.local_latency_per_tx_[type];
   }
 }

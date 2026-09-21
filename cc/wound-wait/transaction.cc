@@ -897,6 +897,7 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
           return LockResult::ABORTED;
 
         }else{// CASに成功!!
+          ++result_->local_wound_counts_per_tx_[result_->local_current_tx_type_];
           tuple->del_owner(i);
           if (!tuple->committed_record) {
             tuple->delete_flag = true;
@@ -935,6 +936,7 @@ int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
         return counter;
 
       }else{ //CAS成功!!
+        ++result_->local_wound_counts_per_tx_[result_->local_current_tx_type_];
         tuple->del_owner(i);
         counter --;
       }

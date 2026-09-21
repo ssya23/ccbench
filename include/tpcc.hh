@@ -54,6 +54,9 @@ public:
     if (loadAcquire(tx.quit_)) return;
 
     tx.begin();
+    /* wound_*lock() から犠牲者を数えるとき、加害者側の種別を知るために置く。
+     * Result はスレッドローカルなので他スレッドとは共有されない。 */
+    tx.result_->local_current_tx_type_ = get_tx_type(query.type);
 
     bool op_ok = true;
     switch (query.type) {
