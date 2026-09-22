@@ -1,0 +1,78 @@
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+#include <mutex>
+
+#include "../../../include/cache_line_size.hh"
+#include "../../../include/inline.hh"
+#include "../../../include/rwlock.hh"
+#include "../../../include/tuple_body.hh"
+#include "waitentry.hh" // WaitEntry(宣言だけの insertInto/removeFrom 込み)が使えるようになる
+#include "latch_rwlock.hh"
+
+using namespace std;
+
+class Tuple {
+public:
+  alignas(CACHE_LINE_SIZE) LatchableRWLock lock_;
+  WaitEntry* waiters_head = nullptr;
+  bool delete_flag = false;
+  uint64_t owners_bitmap = 0;    // ロックを保持しているTXを管理するbitmap. bit=1になっていればそのTXのメタデータにアクセスしてtimestampの情報を得る.
+  alignas(CACHE_LINE_SIZE) TupleBody body_;
+
+  Tuple() = default;
+
+  bool has_owner(int thid) const { return (owners_bitmap >> thid) & 1ULL; } //>>は右シフト. & 1ULL:一番右のbitが1かどうか確認できる (e.g.11000001 & 00000001 -> 00000001 (true))
+  void add_owner(int thid) { owners_bitmap |= (1ULL << thid); }             //<<は左シフト. 00000001をthid分だけ左シフトする.そしてORによって自分のbitを立てる
+  void del_owner(int thid) { owners_bitmap &= ~(1ULL << thid); }            //~(1ULL << thid)自分のbitを立てて反転, &=でbitを下げる
+
+  //ベンチマーク開始前の初期データ投入（DBの一括構築）時
+  void init([[maybe_unused]] size_t thid, TupleBody&& body,
+            [[maybe_unused]] void* p) {
+    body_ = std::move(body);
+  }
+  // insert()から呼ばれる
+  void init(TupleBody&& body) {
+    body_ = std::move(body);
+    lock_.w_lock();
+  }
+};
+
+inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
+  this->ts = my_ts;
+  WaitEntry* current = tuple->waiters_head;
+  WaitEntry* prev_entry = nullptr;
+
+  while (current != nullptr && my_ts < current->ts) {
+    prev_entry = current;
+    current = current->next;
+  }
+  this->next = current;
+  this->prev = prev_entry;
+
+  if (current != nullptr) current->prev = this;       //自分の後ろのEntryに自分のPointerを追加
+  if (prev_entry != nullptr) prev_entry->next = this; 
+  else {
+    if (current != nullptr) current->is_head.store(false, std::memory_order_relaxed);
+    tuple->waiters_head = this;
+    this->is_head.store(true, std::memory_order_release);
+  }
+}
+
+inline void WaitEntry::removeFrom(Tuple* tuple) {
+  if (this->prev != nullptr) {
+    this->prev->next = this->next;
+  }
+  else {
+    tuple->waiters_head = this->next;
+    if (this->next != nullptr) this->next->is_head.store(true, std::memory_order_release);
+  }
+
+  if (this->next != nullptr) {
+    this->next->prev = this->prev;
+  }
+  this->next = nullptr;
+  this->prev = nullptr;
+  this->is_head.store(false, std::memory_order_relaxed);
+}
