@@ -47,10 +47,7 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  */
 void TxExecutor::abort() {
 
-  /* Release locks
-   * wait-dieでは他のTXが自分のLockを解放することはないので, 取得したLockとowners_bitmapは
-   * 全てこのTXが解放する. */
-
+  /* Release locks wait-dieでは他のTXが自分のLockを解放することはないので, 取得したLockとowners_bitmapは全てこのTXが解放する. */
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		Tuple* tuple = (*itr).rcdptr_;
 	  int prev = tuple->lock_.latch_lock();
@@ -225,33 +222,31 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   int owner_id;
   LockResult result;
 
-  /* 待ち行列が空. 互換性とdie判定だけで決まる */
-  if(tuple->waiters_head == nullptr){
+  if(rcounter >= 0){
 
-    /* ownerはreaderのみ(または空). ReadLock同士は互換なので直接取得する */
-    if(rcounter >= 0){
+    if(tuple->waiters_head == nullptr){
       tuple->add_owner(thid_);
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
     }
-
-    /* rcounter == -1: 他のTXがWriteLockを保持している. ownerはちょうど1人.
-     * そのownerが自分より古い(tsが小さい)なら自分がdieする. 若いなら待てる. */
-    owner_id = std::countr_zero(tuple->owners_bitmap);
-    if(AllExecutors[owner_id]->local_timestamp < this->local_timestamp){
-      this->status_ = TransactionStatus::aborted;
-      tuple->lock_.latch_unlock(rcounter);
-      return LockResult::ABORTED;
-    }
-
-  /* 待ち行列が非空. headを奪う位置に入るならdieする(Read要求の追い越し禁止).
-   * my_ts < head->ts なら不変条件より全ownerより古いことが保証されるのでdie判定は不要. */
-  }else{
+    /* WaitListには誰かが待っている.この状態でReadLockを取得すれば,WaitしているTXがstarvation状態になる可能性がある.
+     * headよりもtimestampが小さい時でもReadLockを取得せずabortさせる. */
     if(this->local_timestamp > tuple->waiters_head->ts){
       this->status_ = TransactionStatus::aborted;
       tuple->lock_.latch_unlock(rcounter);
       return LockResult::ABORTED;
+    }
+  
+  // WriteLockが取得されていた
+  }else{
+    if(tuple->waiters_head == nullptr || this->local_timestamp > tuple->waiters_head->ts){
+      owner_id = std::countr_zero(tuple->owners_bitmap);
+      if(AllExecutors[owner_id]->local_timestamp < this->local_timestamp){
+        this->status_ = TransactionStatus::aborted;
+        tuple->lock_.latch_unlock(rcounter);
+        return LockResult::ABORTED;
+      }
     }
   }
 
@@ -344,9 +339,8 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         return Status::WARN_NOT_FOUND;
       }
 
-      /* 自分だけがReadLockを持っている状態. die判定の相手となる他のownerがいないので
-       * そのままWriteLockに昇格する. waiterがいれば追い越すことになるが, 不変条件より
-       * waiterは全員自分より古いので, 昇格後は「古いTXが若い自分を待つ」形になり壊れない. */
+      /* 自分だけがReadLockを持っておりWriteLockにUpgrade.
+       * waitしているTXがいれば追い越すことになるが,それらは全員自分より古いので,Wait-dieの条件は維持される */
       if (upcounter == 1){
         upcounter = -1;
         (*rItr).rcdptr_->add_owner(thid_);
@@ -356,7 +350,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       //他のTXもReadLockをとっていた
       }else if(upcounter >= 1){
-        /* 自分より古いownerが一人でもいれば自分がdieする. */
+        // 自分よりtimestampが小さいownerが一人でもいれば自分がdieする. 
         for(uint64_t bits = (*rItr).rcdptr_->owners_bitmap; bits != 0; bits &= bits - 1){
           int i = std::countr_zero(bits);
           if(AllExecutors[i]->local_timestamp < this->local_timestamp){
@@ -402,23 +396,20 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   bool acquired;
   acquired = false;
 
-  /* ロックが空いていて, かつ待っているTXが全員自分より若いなら直接取得する.
-   * 自分より古いwaiterがいるのに取得すると, そのwaiterが自分を待つことになり
-   * 「若いTXが古いTXを待つ」形になって不変条件が壊れる. */
   if(wcounter == 0 && (tuple->waiters_head == nullptr || tuple->waiters_head->ts < this->local_timestamp)){
     tuple->add_owner(thid_);
     wcounter = -1;
     acquired = true;
 
-  /* WriteLockは必ず競合するのでdie判定を受ける. 自分より古いownerが一人でもいれば自分がdieする.
-   * wcounter == 0 の場合はownerがいないのでループは空回りし, そのまま待ち行列に入る. */
   }else{
-    for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
-      int i = std::countr_zero(bits);
-      if(AllExecutors[i]->local_timestamp < this->local_timestamp){
-        this->status_ = TransactionStatus::aborted;
-        tuple->lock_.latch_unlock(wcounter);
-        return Status::ERROR_LOCK_FAILED;
+    if(tuple->waiters_head == nullptr || this->local_timestamp > tuple->waiters_head->ts){
+      for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
+        int i = std::countr_zero(bits);
+        if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+          this->status_ = TransactionStatus::aborted;
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::ERROR_LOCK_FAILED;
+        }
       }
     }
 
@@ -460,8 +451,6 @@ Status TxExecutor::insert(Storage s, std::string_view key, TupleBody&& body) {
   tuple = new Tuple();
   tuple->init(std::move(body));
   tuple->add_owner(this->thid_);
-  // delete_flagはデフォルトのfalseのまま. このTXがabortした場合, abort()がMasstreeから外して
-  // delete_flag=trueにするので, 待っていたreaderはwait_readopでNOT_FOUNDを受け取る.
 
   Status stat = Masstrees[get_storage(s)].insert_value(key, tuple);
   if (stat == Status::WARN_ALREADY_EXISTS) {
@@ -497,9 +486,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       int upcounter = (*rItr).rcdptr_->lock_.latch_lock();
 
-      /* 自分だけがReadLockを持っている状態. die判定の相手となる他のownerがいないので
-       * そのままWriteLockに昇格する. waiterがいれば追い越すことになるが, 不変条件より
-       * waiterは全員自分より古いので, 昇格後は「古いTXが若い自分を待つ」形になり壊れない. */
       if (upcounter == 1){
         upcounter = -1;
         (*rItr).rcdptr_->add_owner(thid_);
@@ -509,7 +495,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       }else if(upcounter >= 1){
 
-        /* 自分より古いownerが一人でもいれば自分がdieする. */
         for(uint64_t bits = (*rItr).rcdptr_->owners_bitmap; bits != 0; bits &= bits - 1){
           int i = std::countr_zero(bits);
           if(AllExecutors[i]->local_timestamp < this->local_timestamp){
@@ -550,23 +535,20 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   bool acquired;
   acquired = false;
 
-  /* ロックが空いていて, かつ待っているTXが全員自分より若いなら直接取得する.
-   * 自分より古いwaiterがいるのに取得すると, そのwaiterが自分を待つことになり
-   * 「若いTXが古いTXを待つ」形になって不変条件が壊れる. */
   if(wcounter == 0 && (tuple->waiters_head == nullptr || tuple->waiters_head->ts < this->local_timestamp)){
     tuple->add_owner(thid_);
     wcounter = -1;
     acquired = true;
 
-  /* WriteLockは必ず競合するのでdie判定を受ける. 自分より古いownerが一人でもいれば自分がdieする.
-   * wcounter == 0 の場合はownerがいないのでループは空回りし, そのまま待ち行列に入る. */
   }else{
-    for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
-      int i = std::countr_zero(bits);
-      if(AllExecutors[i]->local_timestamp < this->local_timestamp){
-        this->status_ = TransactionStatus::aborted;
-        tuple->lock_.latch_unlock(wcounter);
-        return Status::ERROR_LOCK_FAILED;
+    if(tuple->waiters_head == nullptr || this->local_timestamp > tuple->waiters_head->ts){
+      for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
+        int i = std::countr_zero(bits);
+        if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+          this->status_ = TransactionStatus::aborted;
+          tuple->lock_.latch_unlock(wcounter);
+          return Status::ERROR_LOCK_FAILED;
+        }
       }
     }
 
