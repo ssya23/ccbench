@@ -18,7 +18,10 @@ public:
   alignas(CACHE_LINE_SIZE) LatchableRWLock lock_;
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
-  bool owner_older = false; // 現在の所有者(群)がheadより古いと確定しているか
+  bool owner_older = false; 
+  // 全ownerのtimestamp < waiters_head->tsが確定しているか。
+  // falseの際には,waitlistにいるTX Aがそれよりもtimestampの大きいTXをwaitしている可能性がある.
+  // もしもその状況で,waitlistにいるTXを誰かが待っているならば,wait-for graphの最小値になる可能性があるのでTX Aはwoundする. 
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
   uint64_t owners_bitmap = 0;
   alignas(CACHE_LINE_SIZE) TupleBody body_;
