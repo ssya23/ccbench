@@ -83,6 +83,7 @@ DECLARE_uint64(extime);
 // macro - here it is a plain `extern` so the runner does not depend on
 // any protocol's `GLOBAL` definition.
 extern std::map<uint32_t, std::string> TxTypes;
+extern std::map<uint32_t, std::string> StorageNames;
 
 // `ShowOptParameters()` is defined per-protocol in `cc/<proto>/util.cc`
 // and declared in `cc/<proto>/include/util.hh` - the protocol's static
@@ -327,7 +328,7 @@ void run(std::size_t thread_num, const RunnerOptions& opts,
   }
   if (opts.display_per_tx) {
     std::cout << "Details per transaction type:" << std::endl;
-    CCBenchResults[0].displayPerTxResult(TxTypes);
+    CCBenchResults[0].displayPerTxResult(TxTypes, StorageNames);
   }
 }
 

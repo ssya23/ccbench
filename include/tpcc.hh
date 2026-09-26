@@ -145,6 +145,18 @@ public:
     set_tx_name(TxType::Delivery, "Delivery");
     set_tx_name(TxType::StockLevel, "StockLevel");
 
+    set_storage_name(Storage::Warehouse, "Warehouse");
+    set_storage_name(Storage::District, "District");
+    set_storage_name(Storage::Customer, "Customer");
+    set_storage_name(Storage::CustomerSecondary, "CustomerSec");
+    set_storage_name(Storage::History, "History");
+    set_storage_name(Storage::NewOrder, "NewOrder");
+    set_storage_name(Storage::Order, "Order");
+    set_storage_name(Storage::OrderSecondary, "OrderSec");
+    set_storage_name(Storage::OrderLine, "OrderLine");
+    set_storage_name(Storage::Item, "Item");
+    set_storage_name(Storage::Stock, "Stock");
+
     TPCCInitializaer<Tuple, Param>::load(param);
   }
 

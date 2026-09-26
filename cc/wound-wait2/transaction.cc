@@ -247,7 +247,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     }else if (rcounter == -1){
       // 自分が既に誰かに待たれている → wound実行
       if (this->waiter_count_.load() > 0) { 
-        LockResult woundresult = wound_writelock(tuple);
+        LockResult woundresult = wound_writelock(tuple, s);
 
         if (woundresult == LockResult::ABORTED) {
           tuple->lock_.latch_unlock(rcounter);
@@ -282,7 +282,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
     //WaitListのheadとしてInsert.同じrecordのWaitListで他のTXが自分を待っている.そのためwoundする.
     }else if(rcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
+      LockResult woundresult = wound_writelock(tuple, s);
 
       if(woundresult == LockResult::ABORTED){
         tuple->lock_.latch_unlock(rcounter);
@@ -307,7 +307,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   tuple->lock_.latch_unlock(rcounter);
 
   LockResult result;
-  result = wait_readop(tuple);
+  result = wait_readop(tuple, s);
   if(result == LockResult::SUCCESS) goto FINISH_READ_LOCK;
   if(result == LockResult::ABORTED) return LockResult::ABORTED;
   if(result == LockResult::NOT_FOUND) return LockResult::NOT_FOUND;
@@ -419,7 +419,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         //Upgradeができない. "upcounter 1以上"になっている.
         //自分に対して誰かがWaitしている.
         }else if(this->waiter_count_.load() > 0){
-          upcounter = wound_readlock(utuple, upcounter);
+          upcounter = wound_readlock(utuple, upcounter, s);
       
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
@@ -455,7 +455,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
         //upcounter>1でWriteLock取得ができない.
         }else{
-          upcounter = wound_readlock(utuple, upcounter);
+          upcounter = wound_readlock(utuple, upcounter, s);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
@@ -468,7 +468,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       utuple->lock_.latch_unlock(upcounter);
 
-      LockResult result = wait_upgradeop(utuple);
+      LockResult result = wait_upgradeop(utuple, s);
       if (result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
       if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
 
@@ -512,7 +512,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
     // Woundする必要があるのかをチェック->ある
     }else if(this->waiter_count_.load() > 0){
       if(wcounter == -1) {
-        LockResult woundresult = wound_writelock(tuple);
+        LockResult woundresult = wound_writelock(tuple, s);
 
         if (woundresult == LockResult::ABORTED) {
           tuple->lock_.latch_unlock(wcounter);
@@ -528,7 +528,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }else if(woundresult == LockResult::FAILED) tuple->owner_older = true;
 
       }else if(wcounter >= 1){
-        wcounter = wound_readlock(tuple, wcounter);
+        wcounter = wound_readlock(tuple, wcounter, s);
         //この時点ではまだwait_entryをこのtupleに挿入していないため,removeFromは呼ばない.
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             tuple->lock_.latch_unlock(wcounter);
@@ -558,7 +558,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       tuple->owner_older = true;
 
     }else if(wcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
+      LockResult woundresult = wound_writelock(tuple, s);
 
       if (woundresult == LockResult::ABORTED) {
         tuple->lock_.latch_unlock(wcounter);
@@ -577,7 +577,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
     // wcounter >= 1
     }else{
-      wcounter = wound_readlock(tuple, wcounter);
+      wcounter = wound_readlock(tuple, wcounter, s);
       if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
@@ -593,7 +593,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   tuple->lock_.latch_unlock(wcounter);
 
   if (!acquired) {
-    LockResult result = wait_writeop(tuple);
+    LockResult result = wait_writeop(tuple, s);
     if (result == LockResult::ABORTED)return Status::ERROR_LOCK_FAILED;
     if (result == LockResult::NOT_FOUND)return Status::WARN_NOT_FOUND;
   }
@@ -685,7 +685,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
         //Upgradeができない. "upcounter > 1"になっている.
         }else if(this->waiter_count_.load() > 0){
-          upcounter = wound_readlock(utuple, upcounter);
+          upcounter = wound_readlock(utuple, upcounter, s);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
@@ -719,7 +719,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
         //upcounter>1でWriteLock取得ができない.
         }else{
-          upcounter = wound_readlock(utuple, upcounter);
+          upcounter = wound_readlock(utuple, upcounter, s);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
@@ -739,7 +739,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         return Status::ERROR_LOCK_FAILED;
       }
 
-      LockResult result = wait_upgradeop(utuple);
+      LockResult result = wait_upgradeop(utuple, s);
       if(result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
       if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
       //ReadLockを取得していたのにdeleteされるということは,すでに自分がabortされていることを意味する.
@@ -777,7 +777,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       acquired = true;
     }else if(this->waiter_count_.load() > 0){
       if(wcounter == -1) {
-        LockResult woundresult = wound_writelock(tuple);
+        LockResult woundresult = wound_writelock(tuple, s);
 
         if (woundresult == LockResult::ABORTED) {
           tuple->lock_.latch_unlock(wcounter);
@@ -793,7 +793,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }else if(woundresult == LockResult::FAILED) tuple->owner_older = true;
 
       }else if(wcounter >= 1){
-        wcounter = wound_readlock(tuple, wcounter);
+        wcounter = wound_readlock(tuple, wcounter, s);
         if (this->status_ == TransactionStatus::aborted) {
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
@@ -821,7 +821,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       tuple->owner_older = true;
 
     }else if(wcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
+      LockResult woundresult = wound_writelock(tuple, s);
       if (woundresult == LockResult::ABORTED) {
         tuple->lock_.latch_unlock(wcounter);
         return Status::ERROR_LOCK_FAILED;
@@ -840,7 +840,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
     // wcounter >= 1
     }else{ 
-      wcounter = wound_readlock(tuple, wcounter);
+      wcounter = wound_readlock(tuple, wcounter, s);
       if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
         tuple->lock_.latch_unlock(wcounter);
         return Status::ERROR_LOCK_FAILED;
@@ -855,7 +855,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   tuple->lock_.latch_unlock(wcounter);
 
   if (!acquired) {
-    LockResult result = wait_writeop(tuple);
+    LockResult result = wait_writeop(tuple, s);
     if (result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
     if (result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
   }
@@ -942,7 +942,7 @@ void TxExecutor::leaderWork() {
 #endif
 }
 
-LockResult TxExecutor::wait_readop(Tuple* tuple) {
+LockResult TxExecutor::wait_readop(Tuple* tuple, Storage s) {
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
@@ -1037,7 +1037,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
       //WriteLockがかかっているのでそれをwoundする
       if(result == -1){
-        LockResult woundresult = wound_writelock(tuple);
+        LockResult woundresult = wound_writelock(tuple, s);
 
         if(woundresult == LockResult::ABORTED) {
           this->wait_entry.removeFrom(tuple);
@@ -1097,7 +1097,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
   }
 }
 
-LockResult TxExecutor::wait_writeop(Tuple* tuple) {
+LockResult TxExecutor::wait_writeop(Tuple* tuple, Storage s) {
 	while(true){
     //Status != abortedをチェック.
     if (this->status_.load() == TransactionStatus::aborted){
@@ -1208,7 +1208,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         return LockResult::SUCCESS;
 
       }else if(result == -1){
-        LockResult woundresult = wound_writelock(tuple);
+        LockResult woundresult = wound_writelock(tuple, s);
 
         if(woundresult == LockResult::ABORTED){
           this->wait_entry.removeFrom(tuple);
@@ -1250,7 +1250,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
         }
 
       }else if(result >= 1){
-        result = wound_readlock(tuple, result);
+        result = wound_readlock(tuple, result, s);
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           this->wait_entry.removeFrom(tuple);
           if(tuple->waiters_head == nullptr){
@@ -1284,7 +1284,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
   }
 }
 
-LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
+LockResult TxExecutor::wait_upgradeop(Tuple* tuple, Storage s) {
 	while(true){
 
     if (this->status_.load() == TransactionStatus::aborted){
@@ -1387,7 +1387,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
         tuple->lock_.latch_unlock(result);
         return LockResult::SUCCESS;
       }else if(result > 1){
-        result = wound_readlock(tuple, result);
+        result = wound_readlock(tuple, result, s);
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           this->wait_entry.removeFrom(tuple);
           if (tuple->waiters_head == nullptr) {
@@ -1415,7 +1415,7 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
   }
 }
 
-LockResult TxExecutor::wound_writelock(Tuple *tuple) {
+LockResult TxExecutor::wound_writelock(Tuple *tuple, Storage s) {
   // counterとownersはlatchよってatomicに処理される.そのため,それらが整合していることは保証される.
 
   if (tuple->owners_bitmap != 0) {
@@ -1442,6 +1442,10 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
           ++result_->local_wound_matrix_[result_->local_current_tx_type_]
                                        [AllExecutors[i]->result_
                                             ->local_current_tx_type_];
+          ++result_->local_wound_matrix_by_storage_[result_->local_current_tx_type_]
+                                                   [AllExecutors[i]->result_
+                                                        ->local_current_tx_type_]
+                                                   [static_cast<uint32_t>(s)];
           tuple->del_owner(i);
           if (!tuple->committed_record) {
             tuple->delete_flag = true;
@@ -1460,7 +1464,7 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
   return LockResult::FAILED;
 }
 
-int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
+int TxExecutor::wound_readlock(Tuple *tuple, int counter, Storage s) {
   for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
 	  if(i == thid_){ //自分をwoundしないため
@@ -1483,6 +1487,10 @@ int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
         ++result_->local_wound_matrix_[result_->local_current_tx_type_]
                                      [AllExecutors[i]->result_
                                           ->local_current_tx_type_];
+        ++result_->local_wound_matrix_by_storage_[result_->local_current_tx_type_]
+                                                 [AllExecutors[i]->result_
+                                                      ->local_current_tx_type_]
+                                                 [static_cast<uint32_t>(s)];
         tuple->del_owner(i);
         counter --;
       }

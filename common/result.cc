@@ -732,7 +732,8 @@ void Result::addLocalAllResult(const Result& other) {
 #endif
 }
 
-void Result::displayPerTxResult(std::map<uint32_t, std::string> tx_types) {
+void Result::displayPerTxResult(std::map<uint32_t, std::string> tx_types,
+                                std::map<uint32_t, std::string> storage_names) {
   for (auto& [type, name] : tx_types) {
     long double rate = (double) total_abort_counts_per_tx_[type] /
                        (double) (total_commit_counts_per_tx_[type] +
@@ -761,6 +762,7 @@ void Result::displayPerTxResult(std::map<uint32_t, std::string> tx_types) {
               << std::endl;
   }
   displayWoundMatrix(tx_types);
+  displayWoundMatrixByStorage(tx_types, storage_names);
   std::cout << "  Summary: ";
   for (auto& [type, name] : tx_types) {
     std::cout << total_commit_counts_per_tx_[type] << ","
@@ -788,6 +790,10 @@ void Result::addLocalPerTxResult(const Result& other,
     for (auto& [victim, vname] : tx_types) {
       total_wound_matrix_[type][victim] +=
           other.local_wound_matrix_[type][victim];
+      for (uint32_t st = 0; st < MAX_STORAGE_TYPE; ++st) {
+        total_wound_matrix_by_storage_[type][victim][st] +=
+            other.local_wound_matrix_by_storage_[type][victim][st];
+      }
     }
     total_latency_per_tx_[type] += other.local_latency_per_tx_[type];
   }
@@ -820,4 +826,54 @@ void Result::displayWoundMatrix(std::map<uint32_t, std::string> tx_types) {
     all += col;
   }
   std::cout << std::setw(13) << all << std::endl;
+}
+
+/* 加害者が NewOrder / Payment の wound について、どのテーブルで起きたかを
+ * (被害者種別 x Storage) で表示する。Storage 名を登録していないワークロード
+ * (TPC-C 以外) では何も表示しない。全部 0 の Storage 列は省く。 */
+void Result::displayWoundMatrixByStorage(
+    std::map<uint32_t, std::string> tx_types,
+    std::map<uint32_t, std::string> storage_names) {
+  if (storage_names.empty()) return;
+  for (auto& [wounder, wname] : tx_types) {
+    if (wname != "NewOrder" && wname != "Payment") continue;
+
+    std::vector<uint32_t> cols;
+    for (auto& [st, sname] : storage_names) {
+      uint64_t col = 0;
+      for (auto& [victim, vname] : tx_types) {
+        col += total_wound_matrix_by_storage_[wounder][victim][st];
+      }
+      if (col != 0) cols.push_back(st);
+    }
+
+    std::cout << "  Wound matrix by storage (wounder = " << wname
+              << ", row = victim, column = storage):" << std::endl;
+    std::cout << "    " << std::setw(12) << "";
+    for (uint32_t st : cols) std::cout << std::setw(13) << storage_names[st];
+    std::cout << std::setw(13) << "total" << std::endl;
+
+    for (auto& [victim, vname] : tx_types) {
+      std::cout << "    " << std::setw(12) << vname;
+      uint64_t row = 0;
+      for (uint32_t st : cols) {
+        const uint64_t v = total_wound_matrix_by_storage_[wounder][victim][st];
+        std::cout << std::setw(13) << v;
+        row += v;
+      }
+      std::cout << std::setw(13) << row << std::endl;
+    }
+
+    std::cout << "    " << std::setw(12) << "total";
+    uint64_t all = 0;
+    for (uint32_t st : cols) {
+      uint64_t col = 0;
+      for (auto& [victim, vname] : tx_types) {
+        col += total_wound_matrix_by_storage_[wounder][victim][st];
+      }
+      std::cout << std::setw(13) << col;
+      all += col;
+    }
+    std::cout << std::setw(13) << all << std::endl;
+  }
 }

@@ -101,15 +101,15 @@ public:
   Tuple* get_tuple(Tuple* table, uint64_t key) { return &table[key]; }
 
   /* wound-wait用の関数を追加 */  
-  LockResult wait_readop(Tuple* tuple);
+  LockResult wait_readop(Tuple* tuple, Storage s);
 
-  LockResult wait_writeop(Tuple* tuple);
+  LockResult wait_writeop(Tuple* tuple, Storage s);
 
-  LockResult wait_upgradeop(Tuple* tuple);
+  LockResult wait_upgradeop(Tuple* tuple, Storage s);
 
-  LockResult wound_writelock(Tuple *tuple);
+  LockResult wound_writelock(Tuple *tuple, Storage s);
 
-  int wound_readlock(Tuple *tuple, int counter);
+  int wound_readlock(Tuple *tuple, int counter, Storage s);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);

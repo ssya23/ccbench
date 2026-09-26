@@ -10,6 +10,7 @@
 #include "./cache_line_size.hh"
 
 #define MAX_TX_TYPE 10
+#define MAX_STORAGE_TYPE 16 // include/workload.hh の MAX_TABLES と揃える
 
 class Result {
 public:
@@ -26,6 +27,8 @@ public:
   uint32_t local_current_tx_type_ = 0;
   int64_t local_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t local_success_fw_ = 0;
+  // 大きい配列なので、上のホットなフィールドのレイアウトを変えないよう後ろに置く。
+  uint64_t local_wound_matrix_by_storage_[MAX_TX_TYPE][MAX_TX_TYPE][MAX_STORAGE_TYPE] = {};
 #if ADD_ANALYSIS
   uint64_t local_abort_by_operation_ = 0;
   uint64_t local_abort_by_validation_ = 0;
@@ -76,6 +79,7 @@ public:
   uint64_t total_abort_by_status_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_wound_counts_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_wound_matrix_[MAX_TX_TYPE][MAX_TX_TYPE] = {};
+  uint64_t total_wound_matrix_by_storage_[MAX_TX_TYPE][MAX_TX_TYPE][MAX_STORAGE_TYPE] = {};
   uint64_t total_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_success_fw_ = 0;
 #if ADD_ANALYSIS
@@ -137,8 +141,11 @@ public:
   void displayAllResult(size_t clocks_per_us, size_t extime, size_t thread_num,
                         size_t op_num, size_t batch_op_num);
 
-  void displayPerTxResult(std::map<uint32_t, std::string> tx_types);
+  void displayPerTxResult(std::map<uint32_t, std::string> tx_types,
+                          std::map<uint32_t, std::string> storage_names = {});
   void displayWoundMatrix(std::map<uint32_t, std::string> tx_types);
+  void displayWoundMatrixByStorage(std::map<uint32_t, std::string> tx_types,
+                                   std::map<uint32_t, std::string> storage_names);
 
   void displayOzeAnalysisResult(size_t clocks_per_us, size_t extime,
                                 size_t thread_num);

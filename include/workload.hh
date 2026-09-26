@@ -14,6 +14,12 @@ inline void set_tx_name(TxType t, std::string name) {
   TxTypes.emplace(get_tx_type(t), name);
 }
 
+// wound 行列を Storage 別に表示するときのラベル。登録しないワークロードでは表示しない。
+GLOBAL std::map<uint32_t, std::string> StorageNames;
+inline void set_storage_name(Storage s, std::string name) {
+  StorageNames.emplace(get_storage(s), name);
+}
+
 template <size_t N>
 struct SimpleKey {
   char data[N]; // not null-terminated.
