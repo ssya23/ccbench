@@ -40,5 +40,6 @@ int main(int argc, char* argv[]) try {
 #endif
       });
 
+  displayDieCounts();
   return 0;
 } catch (const std::bad_alloc&) { ERR; }

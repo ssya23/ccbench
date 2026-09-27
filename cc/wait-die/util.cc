@@ -45,6 +45,18 @@ void chkArg() {
 
 void displayDB() {}
 
+void displayDieCounts() {
+  static const char* names[DIE_SITE_NUM] = {
+      "read_head_free", "read_head_held", "read_owner", "upgrade_owner",
+      "write_owner", "delete_upgrade_owner", "delete_owner"};
+  uint64_t total[DIE_SITE_NUM] = {};
+  for (uint32_t t = 0; t < TotalThreadNum; ++t)
+    for (uint32_t i = 0; i < DIE_SITE_NUM; ++i) total[i] += DieCounts[t].c[i];
+  cout << "Die counts by site:" << endl;
+  for (uint32_t i = 0; i < DIE_SITE_NUM; ++i)
+    cout << "  die_" << names[i] << ":\t" << total[i] << endl;
+}
+
 void displayParameter() {
   cout << "#FLAGS_clocks_per_us:\t" << FLAGS_clocks_per_us << endl;
   cout << "#FLAGS_extime:\t\t" << FLAGS_extime << endl;

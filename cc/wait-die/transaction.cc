@@ -233,6 +233,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     /* WaitListには誰かが待っている.この状態でReadLockを取得すれば,WaitしているTXがstarvation状態になる可能性がある.
      * headよりもtimestampが小さい時でもReadLockを取得せずabortさせる. */
     if(this->local_timestamp > tuple->waiters_head->ts){
+      ++DieCounts[thid_].c[rcounter == 0 ? DIE_READ_HEAD_FREE : DIE_READ_HEAD_HELD];
       this->status_ = TransactionStatus::aborted;
       tuple->lock_.latch_unlock(rcounter);
       return LockResult::ABORTED;
@@ -243,6 +244,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     if(tuple->waiters_head == nullptr || this->local_timestamp > tuple->waiters_head->ts){
       owner_id = std::countr_zero(tuple->owners_bitmap);
       if(AllExecutors[owner_id]->local_timestamp < this->local_timestamp){
+        ++DieCounts[thid_].c[DIE_READ_OWNER];
         this->status_ = TransactionStatus::aborted;
         tuple->lock_.latch_unlock(rcounter);
         return LockResult::ABORTED;
@@ -354,6 +356,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         for(uint64_t bits = (*rItr).rcdptr_->owners_bitmap; bits != 0; bits &= bits - 1){
           int i = std::countr_zero(bits);
           if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+            ++DieCounts[thid_].c[DIE_UPGRADE_OWNER];
             this->status_ = TransactionStatus::aborted;
             (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
@@ -406,6 +409,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
         int i = std::countr_zero(bits);
         if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+          ++DieCounts[thid_].c[DIE_WRITE_OWNER];
           this->status_ = TransactionStatus::aborted;
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
@@ -498,6 +502,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         for(uint64_t bits = (*rItr).rcdptr_->owners_bitmap; bits != 0; bits &= bits - 1){
           int i = std::countr_zero(bits);
           if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+            ++DieCounts[thid_].c[DIE_DELETE_UPGRADE_OWNER];
             this->status_ = TransactionStatus::aborted;
             (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
@@ -545,6 +550,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
         int i = std::countr_zero(bits);
         if(AllExecutors[i]->local_timestamp < this->local_timestamp){
+          ++DieCounts[thid_].c[DIE_DELETE_OWNER];
           this->status_ = TransactionStatus::aborted;
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
