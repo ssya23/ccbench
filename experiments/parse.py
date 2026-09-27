@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """results/<実験名>/<プロトコル>/<条件>/run*.log を集計し、実験ディレクトリ直下に
-runs.csv (1行=1回の実行)、summary.csv (1行=プロトコル x 条件)、
-wound_matrix.csv (1行=wound 行列の1マス、ログに行列がある場合のみ) を書く。
+runs.csv (1行=1回の実行)、summary.csv (1行=プロトコル x 条件、tps が真ん中の回の値)、
+wound_matrix.csv (1行=wound 行列の1マス、tps が真ん中の回の値、ログに行列がある場合のみ) を書く。
 
 使い方: python3 experiments/parse.py results/tpcc_thread [results/...]
 """
 import csv
-import statistics
 import sys
 from pathlib import Path
 
@@ -26,8 +25,6 @@ PER_TX_KEYS = {
     "wounds issued:": "wounds_issued",
     "abort rate:": "abort_rate",
 }
-# summary.csv で平均だけでなく最小・最大も出す項目。
-MINMAX = ["tps", "abort_rate"]
 # 条件の列の並び。ここにないものは名前順で後ろに付く。
 COND_ORDER = ["thd", "wh"]
 
@@ -143,27 +140,21 @@ def write_runs(exp_dir, runs, ckeys, mkeys):
                         *(fmt(r["metrics"][k]) if k in r["metrics"] else "" for k in mkeys)])
 
 
-def write_summary(exp_dir, groups, ckeys, mkeys):
-    header = ["cc", *ckeys, "runs"]
-    for k in mkeys:
-        header += [f"{k}_avg", f"{k}_min", f"{k}_max"] if k in MINMAX else [f"{k}_avg"]
-        if k == "tps":
-            header.append("tps_spread")
+def median_run(rs):
+    """tps で並べて真ん中の回を返す (偶数回なら真ん中2つの小さい方)。"""
+    return sorted(rs, key=lambda r: r["metrics"]["tps"])[(len(rs) - 1) // 2]
+
+
+def write_summary(exp_dir, groups, ckeys):
+    gkeys = list(GLOBAL_KEYS.values())
+    header = ["cc", *ckeys, "runs", "median_run", *gkeys]
     with open(exp_dir / "summary.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
         for key, rs in groups.items():
-            row = [*key, len(rs)]
-            for k in mkeys:
-                vals = [r["metrics"][k] for r in rs if k in r["metrics"]]
-                avg = statistics.mean(vals) if vals else None
-                if k in MINMAX:
-                    row += [fmt(avg), fmt(min(vals)), fmt(max(vals))] if vals else ["", "", ""]
-                else:
-                    row.append(fmt(avg) if vals else "")
-                if k == "tps":
-                    row.append(fmt((max(vals) - min(vals)) / avg) if vals and avg else "")
-            w.writerow(row)
+            med = median_run(rs)
+            w.writerow([*key, len(rs), med["run"],
+                        *(fmt(med["metrics"][k]) if k in med["metrics"] else "" for k in gkeys)])
 
 
 def write_wound_matrix(exp_dir, groups, ckeys):
@@ -171,16 +162,11 @@ def write_wound_matrix(exp_dir, groups, ckeys):
         return False
     with open(exp_dir / "wound_matrix.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["cc", *ckeys, "wounder", "victim", "storage", "runs",
-                    "count_avg", "count_min", "count_max"])
+        w.writerow(["cc", *ckeys, "median_run", "wounder", "victim", "storage", "count"])
         for key, rs in groups.items():
-            per_cell = {}
-            for r in rs:
-                for wounder, victim, storage, count in r["cells"]:
-                    per_cell.setdefault((wounder, victim, storage), []).append(count)
-            for (wounder, victim, storage), counts in per_cell.items():
-                w.writerow([*key, wounder, victim, storage, len(counts),
-                            fmt(statistics.mean(counts)), min(counts), max(counts)])
+            med = median_run(rs)
+            for wounder, victim, storage, count in med["cells"]:
+                w.writerow([*key, med["run"], wounder, victim, storage, count])
     return True
 
 
@@ -197,7 +183,7 @@ def main():
         mkeys = metric_order([r for r in runs if r["ok"]])
         groups = group(runs, ckeys)
         write_runs(exp_dir, runs, ckeys, mkeys)
-        write_summary(exp_dir, groups, ckeys, mkeys)
+        write_summary(exp_dir, groups, ckeys)
         outputs = ["runs.csv", "summary.csv"]
         if write_wound_matrix(exp_dir, groups, ckeys):
             outputs.append("wound_matrix.csv")
