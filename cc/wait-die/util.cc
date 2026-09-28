@@ -62,6 +62,7 @@ void displayWaitCounts() {
   uint64_t cnt[WAIT_KIND_NUM] = {}, cycles[WAIT_KIND_NUM] = {}, max_cycles[WAIT_KIND_NUM] = {};
   uint64_t nonhead[WAIT_KIND_NUM] = {}, max_nonhead[WAIT_KIND_NUM] = {};
   uint64_t head[WAIT_KIND_NUM] = {}, max_head[WAIT_KIND_NUM] = {}, head_lost[WAIT_KIND_NUM] = {};
+  uint64_t checks[WAIT_KIND_NUM] = {}, mismatch[WAIT_KIND_NUM] = {}, max_ahead[WAIT_KIND_NUM] = {};
   for (uint32_t t = 0; t < TotalThreadNum; ++t) {
     const WaitCounter& w = WaitCounts[t];
     for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
@@ -73,6 +74,9 @@ void displayWaitCounts() {
       head[i] += w.head_cycles[i];
       if (w.max_head_cycles[i] > max_head[i]) max_head[i] = w.max_head_cycles[i];
       head_lost[i] += w.head_lost[i];
+      checks[i] += w.checks[i];
+      mismatch[i] += w.mismatch[i];
+      if (w.max_ahead[i] > max_ahead[i]) max_ahead[i] = w.max_ahead[i];
     }
   }
   const double cpu = static_cast<double>(FLAGS_clocks_per_us);
@@ -87,6 +91,9 @@ void displayWaitCounts() {
     cout << "  wait_" << names[i] << "_head_total_us:\t" << head[i] / cpu << endl;
     cout << "  wait_" << names[i] << "_head_max_us:\t" << max_head[i] / cpu << endl;
     cout << "  wait_" << names[i] << "_head_lost_count:\t" << head_lost[i] << endl;
+    cout << "  wait_" << names[i] << "_position_checks:\t" << checks[i] << endl;
+    cout << "  wait_" << names[i] << "_head_flag_mismatch:\t" << mismatch[i] << endl;
+    cout << "  wait_" << names[i] << "_max_ahead:\t" << max_ahead[i] << endl;
   }
 }
 

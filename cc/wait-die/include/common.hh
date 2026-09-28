@@ -82,6 +82,9 @@ struct alignas(CACHE_LINE_SIZE) WaitCounter {
   uint64_t head_cycles[WAIT_KIND_NUM] = {};
   uint64_t max_head_cycles[WAIT_KIND_NUM] = {};
   uint64_t head_lost[WAIT_KIND_NUM] = {};
+  uint64_t checks[WAIT_KIND_NUM] = {};
+  uint64_t mismatch[WAIT_KIND_NUM] = {};
+  uint64_t max_ahead[WAIT_KIND_NUM] = {};
 };
 GLOBAL WaitCounter WaitCounts[64];
 
@@ -89,6 +92,7 @@ struct WaitTimer {
   uint32_t thid_, kind_;
   uint64_t start_, since_;
   uint64_t nonhead_ = 0, head_ = 0, head_lost_ = 0;
+  uint64_t checks_ = 0, mismatch_ = 0, max_ahead_ = 0;
   bool in_head_ = false;
   WaitTimer(uint32_t thid, uint32_t kind) : thid_(thid), kind_(kind), start_(rdtscp()), since_(start_) {}
   void set_head(bool h) {
@@ -98,6 +102,11 @@ struct WaitTimer {
     if (in_head_) ++head_lost_;
     since_ = now;
     in_head_ = h;
+  }
+  void record_check(uint64_t ahead, bool mismatch) {
+    ++checks_;
+    if (mismatch) ++mismatch_;
+    if (ahead > max_ahead_) max_ahead_ = ahead;
   }
   ~WaitTimer() {
     uint64_t now = rdtscp();
@@ -112,5 +121,8 @@ struct WaitTimer {
     w.head_cycles[kind_] += head_;
     if (head_ > w.max_head_cycles[kind_]) w.max_head_cycles[kind_] = head_;
     w.head_lost[kind_] += head_lost_;
+    w.checks[kind_] += checks_;
+    w.mismatch[kind_] += mismatch_;
+    if (max_ahead_ > w.max_ahead[kind_]) w.max_ahead[kind_] = max_ahead_;
   }
 };

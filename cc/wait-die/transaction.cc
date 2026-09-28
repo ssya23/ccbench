@@ -650,12 +650,23 @@ void TxExecutor::leaderWork() {
 #endif
 }
 
+static inline void check_head_position(Tuple* tuple, WaitEntry* self, WaitTimer& timer) {
+  int c = tuple->lock_.latch_lock();
+  uint64_t ahead = 0;
+  for (WaitEntry* e = self->prev; e != nullptr; e = e->prev) ++ahead;
+  bool mismatch = (tuple->waiters_head == self) && !self->is_head.load(memory_order_acquire);
+  tuple->lock_.latch_unlock(c);
+  timer.record_check(ahead, mismatch);
+}
+
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
   WaitTimer timer(thid_, WAIT_READ);
+  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
       timer.set_head(false);
+      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
@@ -699,10 +710,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
   WaitTimer timer(thid_, WAIT_WRITE);
+  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
       timer.set_head(false);
+      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
@@ -744,10 +757,12 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
   WaitTimer timer(thid_, WAIT_UPGRADE);
+  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
       timer.set_head(false);
+      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
