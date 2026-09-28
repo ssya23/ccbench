@@ -647,9 +647,11 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      timer.set_head(false);
       _mm_pause();
       continue;
     }
+    timer.set_head(true);
 
     // これ以降はheadの操作
     if(tuple->delete_flag == true) {
@@ -692,9 +694,11 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      timer.set_head(false);
       _mm_pause();
       continue;
     }
+    timer.set_head(true);
 
     // headの操作
     if(tuple->delete_flag == true){
@@ -735,9 +739,11 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
+      timer.set_head(false);
       _mm_pause();
       continue;
     }
+    timer.set_head(true);
 
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();

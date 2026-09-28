@@ -60,11 +60,19 @@ void displayDieCounts() {
 void displayWaitCounts() {
   static const char* names[WAIT_KIND_NUM] = {"read", "write", "upgrade"};
   uint64_t cnt[WAIT_KIND_NUM] = {}, cycles[WAIT_KIND_NUM] = {}, max_cycles[WAIT_KIND_NUM] = {};
+  uint64_t nonhead[WAIT_KIND_NUM] = {}, max_nonhead[WAIT_KIND_NUM] = {};
+  uint64_t head[WAIT_KIND_NUM] = {}, max_head[WAIT_KIND_NUM] = {}, head_lost[WAIT_KIND_NUM] = {};
   for (uint32_t t = 0; t < TotalThreadNum; ++t) {
+    const WaitCounter& w = WaitCounts[t];
     for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
-      cnt[i] += WaitCounts[t].cnt[i];
-      cycles[i] += WaitCounts[t].cycles[i];
-      if (WaitCounts[t].max_cycles[i] > max_cycles[i]) max_cycles[i] = WaitCounts[t].max_cycles[i];
+      cnt[i] += w.cnt[i];
+      cycles[i] += w.cycles[i];
+      if (w.max_cycles[i] > max_cycles[i]) max_cycles[i] = w.max_cycles[i];
+      nonhead[i] += w.nonhead_cycles[i];
+      if (w.max_nonhead_cycles[i] > max_nonhead[i]) max_nonhead[i] = w.max_nonhead_cycles[i];
+      head[i] += w.head_cycles[i];
+      if (w.max_head_cycles[i] > max_head[i]) max_head[i] = w.max_head_cycles[i];
+      head_lost[i] += w.head_lost[i];
     }
   }
   const double cpu = static_cast<double>(FLAGS_clocks_per_us);
@@ -74,6 +82,11 @@ void displayWaitCounts() {
     cout << "  wait_" << names[i] << "_total_us:\t" << cycles[i] / cpu << endl;
     cout << "  wait_" << names[i] << "_avg_us:\t" << (cnt[i] ? cycles[i] / cpu / cnt[i] : 0) << endl;
     cout << "  wait_" << names[i] << "_max_us:\t" << max_cycles[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_nonhead_total_us:\t" << nonhead[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_nonhead_max_us:\t" << max_nonhead[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_head_total_us:\t" << head[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_head_max_us:\t" << max_head[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_head_lost_count:\t" << head_lost[i] << endl;
   }
 }
 
