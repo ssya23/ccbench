@@ -224,11 +224,19 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
   if(rcounter >= 0){
 
-    if(tuple->waiters_head == nullptr || this->local_timestamp > tuple->waiters_head->ts){
+    if(tuple->waiters_head == nullptr){
       tuple->add_owner(thid_);
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
+    }
+    /* WaitListには誰かが待っている.この状態でReadLockを取得すれば,WaitしているTXがstarvation状態になる可能性がある.
+     * headよりもtimestampが小さい時でもReadLockを取得せずabortさせる. */
+    if(this->local_timestamp > tuple->waiters_head->ts){
+      ++DieCounts[thid_].c[rcounter == 0 ? DIE_READ_HEAD_FREE : DIE_READ_HEAD_HELD];
+      this->status_ = TransactionStatus::aborted;
+      tuple->lock_.latch_unlock(rcounter);
+      return LockResult::ABORTED;
     }
   
   // WriteLockが取得されていた
