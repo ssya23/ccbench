@@ -47,8 +47,9 @@ void displayDB() {}
 
 void displayDieCounts() {
   static const char* names[DIE_SITE_NUM] = {
-      "read_head_free", "read_head_held", "read_owner", "upgrade_owner",
-      "write_owner", "delete_upgrade_owner", "delete_owner"};
+      "read_tail", "read_owner", "upgrade_tail", "upgrade_owner", "write_tail",
+      "write_owner", "delete_upgrade_tail", "delete_upgrade_owner", "delete_tail",
+      "delete_owner"};
   uint64_t total[DIE_SITE_NUM] = {};
   for (uint32_t t = 0; t < TotalThreadNum; ++t)
     for (uint32_t i = 0; i < DIE_SITE_NUM; ++i) total[i] += DieCounts[t].c[i];

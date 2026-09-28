@@ -17,6 +17,7 @@ class Tuple {
 public:
   alignas(CACHE_LINE_SIZE) LatchableRWLock lock_;
   WaitEntry* waiters_head = nullptr;
+  WaitEntry* waiters_tail = nullptr;
   bool delete_flag = false;
   uint64_t owners_bitmap = 0;    // ロックを保持しているTXを管理するbitmap. bit=1になっていればそのTXのメタデータにアクセスしてtimestampの情報を得る.
   alignas(CACHE_LINE_SIZE) TupleBody body_;
@@ -52,6 +53,7 @@ inline void WaitEntry::insertInto(Tuple* tuple, int my_ts) {
   this->prev = prev_entry;
 
   if (current != nullptr) current->prev = this;       //自分の後ろのEntryに自分のPointerを追加
+  else tuple->waiters_tail = this;
   if (prev_entry != nullptr) prev_entry->next = this; 
   else {
     if (current != nullptr) current->is_head.store(false, std::memory_order_relaxed);
@@ -72,6 +74,7 @@ inline void WaitEntry::removeFrom(Tuple* tuple) {
   if (this->next != nullptr) {
     this->next->prev = this->prev;
   }
+  else tuple->waiters_tail = this->prev;
   this->next = nullptr;
   this->prev = nullptr;
   this->is_head.store(false, std::memory_order_relaxed);

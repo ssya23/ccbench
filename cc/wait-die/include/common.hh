@@ -60,13 +60,16 @@ GLOBAL std::vector<TxExecutor*> AllExecutors;
 
 /* debug: どこでdieしたかをスレッドごとに数える. 全スレッド終了後に displayDieCounts() で合計を表示する. */
 enum DieSite : uint32_t {
-  DIE_READ_HEAD_FREE,     // read: waiterがいてheadより若い (lockは空いていた)
-  DIE_READ_HEAD_HELD,     // read: waiterがいてheadより若い (readロック保持中)
-  DIE_READ_OWNER,         // read: writeロックのownerが自分より古い
-  DIE_UPGRADE_OWNER,      // update(upgrade): 自分より古いreaderがいる
-  DIE_WRITE_OWNER,        // update(blind write): 自分より古いownerがいる
-  DIE_DELETE_UPGRADE_OWNER, // delete(upgrade): 自分より古いreaderがいる
-  DIE_DELETE_OWNER,       // delete: 自分より古いownerがいる
+  DIE_READ_TAIL,
+  DIE_READ_OWNER,
+  DIE_UPGRADE_TAIL,
+  DIE_UPGRADE_OWNER,
+  DIE_WRITE_TAIL,
+  DIE_WRITE_OWNER,
+  DIE_DELETE_UPGRADE_TAIL,
+  DIE_DELETE_UPGRADE_OWNER,
+  DIE_DELETE_TAIL,
+  DIE_DELETE_OWNER,
   DIE_SITE_NUM
 };
 struct alignas(CACHE_LINE_SIZE) DieCounter { uint64_t c[DIE_SITE_NUM] = {}; };
