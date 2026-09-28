@@ -57,6 +57,26 @@ void displayDieCounts() {
     cout << "  die_" << names[i] << ":\t" << total[i] << endl;
 }
 
+void displayWaitCounts() {
+  static const char* names[WAIT_KIND_NUM] = {"read", "write", "upgrade"};
+  uint64_t cnt[WAIT_KIND_NUM] = {}, cycles[WAIT_KIND_NUM] = {}, max_cycles[WAIT_KIND_NUM] = {};
+  for (uint32_t t = 0; t < TotalThreadNum; ++t) {
+    for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
+      cnt[i] += WaitCounts[t].cnt[i];
+      cycles[i] += WaitCounts[t].cycles[i];
+      if (WaitCounts[t].max_cycles[i] > max_cycles[i]) max_cycles[i] = WaitCounts[t].max_cycles[i];
+    }
+  }
+  const double cpu = static_cast<double>(FLAGS_clocks_per_us);
+  cout << "Wait counts (time in us, clocks_per_us=" << FLAGS_clocks_per_us << "):" << endl;
+  for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
+    cout << "  wait_" << names[i] << "_count:\t" << cnt[i] << endl;
+    cout << "  wait_" << names[i] << "_total_us:\t" << cycles[i] / cpu << endl;
+    cout << "  wait_" << names[i] << "_avg_us:\t" << (cnt[i] ? cycles[i] / cpu / cnt[i] : 0) << endl;
+    cout << "  wait_" << names[i] << "_max_us:\t" << max_cycles[i] / cpu << endl;
+  }
+}
+
 void displayParameter() {
   cout << "#FLAGS_clocks_per_us:\t" << FLAGS_clocks_per_us << endl;
   cout << "#FLAGS_extime:\t\t" << FLAGS_extime << endl;

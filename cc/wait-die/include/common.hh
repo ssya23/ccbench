@@ -6,6 +6,7 @@
 #include "../../../include/cache_line_size.hh"
 #include "../../../include/int64byte.hh"
 #include "../../../include/masstree_wrapper.hh"
+#include "../../../include/tsc.hh"
 #include "tuple.hh"
 
 #include "gflags/gflags.h"
@@ -70,3 +71,24 @@ enum DieSite : uint32_t {
 };
 struct alignas(CACHE_LINE_SIZE) DieCounter { uint64_t c[DIE_SITE_NUM] = {}; };
 GLOBAL DieCounter DieCounts[64];
+
+enum WaitKind : uint32_t { WAIT_READ, WAIT_WRITE, WAIT_UPGRADE, WAIT_KIND_NUM };
+struct alignas(CACHE_LINE_SIZE) WaitCounter {
+  uint64_t cnt[WAIT_KIND_NUM] = {};
+  uint64_t cycles[WAIT_KIND_NUM] = {};
+  uint64_t max_cycles[WAIT_KIND_NUM] = {};
+};
+GLOBAL WaitCounter WaitCounts[64];
+
+struct WaitTimer {
+  uint32_t thid_, kind_;
+  uint64_t start_;
+  WaitTimer(uint32_t thid, uint32_t kind) : thid_(thid), kind_(kind), start_(rdtscp()) {}
+  ~WaitTimer() {
+    uint64_t d = rdtscp() - start_;
+    WaitCounter& w = WaitCounts[thid_];
+    ++w.cnt[kind_];
+    w.cycles[kind_] += d;
+    if (d > w.max_cycles[kind_]) w.max_cycles[kind_] = d;
+  }
+};

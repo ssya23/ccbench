@@ -50,5 +50,6 @@ int main(int argc, char* argv[]) try {
 
 
   displayDieCounts();
+  displayWaitCounts();
   return 0;
 } catch (const bad_alloc&) { ERR; }

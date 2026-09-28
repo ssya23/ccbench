@@ -643,6 +643,7 @@ void TxExecutor::leaderWork() {
 }
 
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
+  WaitTimer timer(thid_, WAIT_READ);
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
@@ -687,6 +688,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
+  WaitTimer timer(thid_, WAIT_WRITE);
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
@@ -729,6 +731,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
+  WaitTimer timer(thid_, WAIT_UPGRADE);
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
