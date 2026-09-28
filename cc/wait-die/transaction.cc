@@ -234,7 +234,6 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   LockResult result;
 
   if(has_older_waiter(tuple, this->local_timestamp)){
-    ++DieCounts[thid_].c[DIE_READ_TAIL];
     this->status_ = TransactionStatus::aborted;
     tuple->lock_.latch_unlock(rcounter);
     return LockResult::ABORTED;
@@ -248,7 +247,6 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   }
 
   if(has_older_owner(tuple, this->local_timestamp)){
-    ++DieCounts[thid_].c[DIE_READ_OWNER];
     this->status_ = TransactionStatus::aborted;
     tuple->lock_.latch_unlock(rcounter);
     return LockResult::ABORTED;
@@ -344,7 +342,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       }
 
       if(has_older_waiter((*rItr).rcdptr_, this->local_timestamp)){
-        ++DieCounts[thid_].c[DIE_UPGRADE_TAIL];
         this->status_ = TransactionStatus::aborted;
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
         return Status::ERROR_LOCK_FAILED;
@@ -361,7 +358,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       }else if(upcounter >= 1){
         // 自分よりtimestampが小さいownerが一人でもいれば自分がdieする. 
         if(has_older_owner((*rItr).rcdptr_, this->local_timestamp)){
-          ++DieCounts[thid_].c[DIE_UPGRADE_OWNER];
           this->status_ = TransactionStatus::aborted;
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
@@ -404,7 +400,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   acquired = false;
 
   if(has_older_waiter(tuple, this->local_timestamp)){
-    ++DieCounts[thid_].c[DIE_WRITE_TAIL];
     this->status_ = TransactionStatus::aborted;
     tuple->lock_.latch_unlock(wcounter);
     return Status::ERROR_LOCK_FAILED;
@@ -417,7 +412,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
   }else{
     if(has_older_owner(tuple, this->local_timestamp)){
-      ++DieCounts[thid_].c[DIE_WRITE_OWNER];
       this->status_ = TransactionStatus::aborted;
       tuple->lock_.latch_unlock(wcounter);
       return Status::ERROR_LOCK_FAILED;
@@ -497,7 +491,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       int upcounter = (*rItr).rcdptr_->lock_.latch_lock();
 
       if(has_older_waiter((*rItr).rcdptr_, this->local_timestamp)){
-        ++DieCounts[thid_].c[DIE_DELETE_UPGRADE_TAIL];
         this->status_ = TransactionStatus::aborted;
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
         return Status::ERROR_LOCK_FAILED;
@@ -513,7 +506,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       }else if(upcounter >= 1){
 
         if(has_older_owner((*rItr).rcdptr_, this->local_timestamp)){
-          ++DieCounts[thid_].c[DIE_DELETE_UPGRADE_OWNER];
           this->status_ = TransactionStatus::aborted;
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
@@ -551,7 +543,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   acquired = false;
 
   if(has_older_waiter(tuple, this->local_timestamp)){
-    ++DieCounts[thid_].c[DIE_DELETE_TAIL];
     this->status_ = TransactionStatus::aborted;
     tuple->lock_.latch_unlock(wcounter);
     return Status::ERROR_LOCK_FAILED;
@@ -564,7 +555,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
   }else{
     if(has_older_owner(tuple, this->local_timestamp)){
-      ++DieCounts[thid_].c[DIE_DELETE_OWNER];
       this->status_ = TransactionStatus::aborted;
       tuple->lock_.latch_unlock(wcounter);
       return Status::ERROR_LOCK_FAILED;
@@ -662,27 +652,13 @@ void TxExecutor::leaderWork() {
 #endif
 }
 
-static inline void check_head_position(Tuple* tuple, WaitEntry* self, WaitTimer& timer) {
-  int c = tuple->lock_.latch_lock();
-  uint64_t ahead = 0;
-  for (WaitEntry* e = self->prev; e != nullptr; e = e->prev) ++ahead;
-  bool mismatch = (tuple->waiters_head == self) && !self->is_head.load(memory_order_acquire);
-  tuple->lock_.latch_unlock(c);
-  timer.record_check(ahead, mismatch);
-}
-
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
-  WaitTimer timer(thid_, WAIT_READ);
-  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      timer.set_head(false);
-      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
-    timer.set_head(true);
 
     // これ以降はheadの操作
     if(tuple->delete_flag == true) {
@@ -721,17 +697,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
-  WaitTimer timer(thid_, WAIT_WRITE);
-  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      timer.set_head(false);
-      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
-    timer.set_head(true);
 
     // headの操作
     if(tuple->delete_flag == true){
@@ -768,17 +739,12 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 }
 
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
-  WaitTimer timer(thid_, WAIT_UPGRADE);
-  uint32_t spins = 0;
 	while(true){
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      timer.set_head(false);
-      if ((++spins & ((1u << 14) - 1)) == 0) check_head_position(tuple, &this->wait_entry, timer);
       _mm_pause();
       continue;
     }
-    timer.set_head(true);
 
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();

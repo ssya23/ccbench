@@ -12,7 +12,3 @@ extern void partTableInit([[maybe_unused]] size_t thid, uint64_t start,
                           uint64_t end);
 
 extern void ShowOptParameters();
-
-extern void displayDieCounts();
-
-extern void displayWaitCounts();

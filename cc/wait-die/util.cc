@@ -45,59 +45,6 @@ void chkArg() {
 
 void displayDB() {}
 
-void displayDieCounts() {
-  static const char* names[DIE_SITE_NUM] = {
-      "read_tail", "read_owner", "upgrade_tail", "upgrade_owner", "write_tail",
-      "write_owner", "delete_upgrade_tail", "delete_upgrade_owner", "delete_tail",
-      "delete_owner"};
-  uint64_t total[DIE_SITE_NUM] = {};
-  for (uint32_t t = 0; t < TotalThreadNum; ++t)
-    for (uint32_t i = 0; i < DIE_SITE_NUM; ++i) total[i] += DieCounts[t].c[i];
-  cout << "Die counts by site:" << endl;
-  for (uint32_t i = 0; i < DIE_SITE_NUM; ++i)
-    cout << "  die_" << names[i] << ":\t" << total[i] << endl;
-}
-
-void displayWaitCounts() {
-  static const char* names[WAIT_KIND_NUM] = {"read", "write", "upgrade"};
-  uint64_t cnt[WAIT_KIND_NUM] = {}, cycles[WAIT_KIND_NUM] = {}, max_cycles[WAIT_KIND_NUM] = {};
-  uint64_t nonhead[WAIT_KIND_NUM] = {}, max_nonhead[WAIT_KIND_NUM] = {};
-  uint64_t head[WAIT_KIND_NUM] = {}, max_head[WAIT_KIND_NUM] = {}, head_lost[WAIT_KIND_NUM] = {};
-  uint64_t checks[WAIT_KIND_NUM] = {}, mismatch[WAIT_KIND_NUM] = {}, max_ahead[WAIT_KIND_NUM] = {};
-  for (uint32_t t = 0; t < TotalThreadNum; ++t) {
-    const WaitCounter& w = WaitCounts[t];
-    for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
-      cnt[i] += w.cnt[i];
-      cycles[i] += w.cycles[i];
-      if (w.max_cycles[i] > max_cycles[i]) max_cycles[i] = w.max_cycles[i];
-      nonhead[i] += w.nonhead_cycles[i];
-      if (w.max_nonhead_cycles[i] > max_nonhead[i]) max_nonhead[i] = w.max_nonhead_cycles[i];
-      head[i] += w.head_cycles[i];
-      if (w.max_head_cycles[i] > max_head[i]) max_head[i] = w.max_head_cycles[i];
-      head_lost[i] += w.head_lost[i];
-      checks[i] += w.checks[i];
-      mismatch[i] += w.mismatch[i];
-      if (w.max_ahead[i] > max_ahead[i]) max_ahead[i] = w.max_ahead[i];
-    }
-  }
-  const double cpu = static_cast<double>(FLAGS_clocks_per_us);
-  cout << "Wait counts (time in us, clocks_per_us=" << FLAGS_clocks_per_us << "):" << endl;
-  for (uint32_t i = 0; i < WAIT_KIND_NUM; ++i) {
-    cout << "  wait_" << names[i] << "_count:\t" << cnt[i] << endl;
-    cout << "  wait_" << names[i] << "_total_us:\t" << cycles[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_avg_us:\t" << (cnt[i] ? cycles[i] / cpu / cnt[i] : 0) << endl;
-    cout << "  wait_" << names[i] << "_max_us:\t" << max_cycles[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_nonhead_total_us:\t" << nonhead[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_nonhead_max_us:\t" << max_nonhead[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_head_total_us:\t" << head[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_head_max_us:\t" << max_head[i] / cpu << endl;
-    cout << "  wait_" << names[i] << "_head_lost_count:\t" << head_lost[i] << endl;
-    cout << "  wait_" << names[i] << "_position_checks:\t" << checks[i] << endl;
-    cout << "  wait_" << names[i] << "_head_flag_mismatch:\t" << mismatch[i] << endl;
-    cout << "  wait_" << names[i] << "_max_ahead:\t" << max_ahead[i] << endl;
-  }
-}
-
 void displayParameter() {
   cout << "#FLAGS_clocks_per_us:\t" << FLAGS_clocks_per_us << endl;
   cout << "#FLAGS_extime:\t\t" << FLAGS_extime << endl;

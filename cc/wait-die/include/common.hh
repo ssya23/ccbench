@@ -6,7 +6,6 @@
 #include "../../../include/cache_line_size.hh"
 #include "../../../include/int64byte.hh"
 #include "../../../include/masstree_wrapper.hh"
-#include "../../../include/tsc.hh"
 #include "tuple.hh"
 
 #include "gflags/gflags.h"
@@ -57,75 +56,3 @@ DECLARE_double(zipf_skew);
 class TxExecutor; //前方宣言を追加する必要
 alignas(CACHE_LINE_SIZE) GLOBAL uint32_t TotalThreadNum;
 GLOBAL std::vector<TxExecutor*> AllExecutors;
-
-/* debug: どこでdieしたかをスレッドごとに数える. 全スレッド終了後に displayDieCounts() で合計を表示する. */
-enum DieSite : uint32_t {
-  DIE_READ_TAIL,
-  DIE_READ_OWNER,
-  DIE_UPGRADE_TAIL,
-  DIE_UPGRADE_OWNER,
-  DIE_WRITE_TAIL,
-  DIE_WRITE_OWNER,
-  DIE_DELETE_UPGRADE_TAIL,
-  DIE_DELETE_UPGRADE_OWNER,
-  DIE_DELETE_TAIL,
-  DIE_DELETE_OWNER,
-  DIE_SITE_NUM
-};
-struct alignas(CACHE_LINE_SIZE) DieCounter { uint64_t c[DIE_SITE_NUM] = {}; };
-GLOBAL DieCounter DieCounts[64];
-
-enum WaitKind : uint32_t { WAIT_READ, WAIT_WRITE, WAIT_UPGRADE, WAIT_KIND_NUM };
-struct alignas(CACHE_LINE_SIZE) WaitCounter {
-  uint64_t cnt[WAIT_KIND_NUM] = {};
-  uint64_t cycles[WAIT_KIND_NUM] = {};
-  uint64_t max_cycles[WAIT_KIND_NUM] = {};
-  uint64_t nonhead_cycles[WAIT_KIND_NUM] = {};
-  uint64_t max_nonhead_cycles[WAIT_KIND_NUM] = {};
-  uint64_t head_cycles[WAIT_KIND_NUM] = {};
-  uint64_t max_head_cycles[WAIT_KIND_NUM] = {};
-  uint64_t head_lost[WAIT_KIND_NUM] = {};
-  uint64_t checks[WAIT_KIND_NUM] = {};
-  uint64_t mismatch[WAIT_KIND_NUM] = {};
-  uint64_t max_ahead[WAIT_KIND_NUM] = {};
-};
-GLOBAL WaitCounter WaitCounts[64];
-
-struct WaitTimer {
-  uint32_t thid_, kind_;
-  uint64_t start_, since_;
-  uint64_t nonhead_ = 0, head_ = 0, head_lost_ = 0;
-  uint64_t checks_ = 0, mismatch_ = 0, max_ahead_ = 0;
-  bool in_head_ = false;
-  WaitTimer(uint32_t thid, uint32_t kind) : thid_(thid), kind_(kind), start_(rdtscp()), since_(start_) {}
-  void set_head(bool h) {
-    if (h == in_head_) return;
-    uint64_t now = rdtscp();
-    (in_head_ ? head_ : nonhead_) += now - since_;
-    if (in_head_) ++head_lost_;
-    since_ = now;
-    in_head_ = h;
-  }
-  void record_check(uint64_t ahead, bool mismatch) {
-    ++checks_;
-    if (mismatch) ++mismatch_;
-    if (ahead > max_ahead_) max_ahead_ = ahead;
-  }
-  ~WaitTimer() {
-    uint64_t now = rdtscp();
-    (in_head_ ? head_ : nonhead_) += now - since_;
-    uint64_t d = now - start_;
-    WaitCounter& w = WaitCounts[thid_];
-    ++w.cnt[kind_];
-    w.cycles[kind_] += d;
-    if (d > w.max_cycles[kind_]) w.max_cycles[kind_] = d;
-    w.nonhead_cycles[kind_] += nonhead_;
-    if (nonhead_ > w.max_nonhead_cycles[kind_]) w.max_nonhead_cycles[kind_] = nonhead_;
-    w.head_cycles[kind_] += head_;
-    if (head_ > w.max_head_cycles[kind_]) w.max_head_cycles[kind_] = head_;
-    w.head_lost[kind_] += head_lost_;
-    w.checks[kind_] += checks_;
-    w.mismatch[kind_] += mismatch_;
-    if (max_ahead_ > w.max_ahead[kind_]) w.max_ahead[kind_] = max_ahead_;
-  }
-};
