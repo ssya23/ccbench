@@ -1124,26 +1124,18 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
       if (AllExecutors[i]->local_timestamp > local_timestamp) {
         TransactionStatus expected = TransactionStatus::inflight;
         if (!AllExecutors[i]->status_.compare_exchange_strong(expected, TransactionStatus::aborted,memory_order_acq_rel, memory_order_acquire)) {
-          if(expected == TransactionStatus::aborted){
-            tuple->del_owner(i); //ownersには値が登録されている.ということはLockもまだ解放されていないということが言える.
-            if (!tuple->committed_record) {
-              tuple->delete_flag = true;
-              return LockResult::NOT_FOUND;
-            }
-            return LockResult::SUCCESS;
+          if (expected != TransactionStatus::aborted) {
+            this->status_.store(TransactionStatus::aborted, memory_order_release);
+            return LockResult::ABORTED;
           }
-
-          this->status_.store(TransactionStatus::aborted, memory_order_release);
-          return LockResult::ABORTED;
-
-        }else{// CASに成功!!
-          tuple->del_owner(i);
-          if (!tuple->committed_record) {
-            tuple->delete_flag = true;
-            return LockResult::NOT_FOUND;
-          }
-          return LockResult::SUCCESS;
         }
+
+        tuple->del_owner(i); //ownersには値が登録されている.ということはLockもまだ解放されていないということが言える.
+        if (!tuple->committed_record) {
+          tuple->delete_flag = true;
+          return LockResult::NOT_FOUND;
+        }
+        return LockResult::SUCCESS;
 
       }else if(AllExecutors[i]->local_timestamp < local_timestamp){
         return LockResult::FAILED;
@@ -1164,19 +1156,14 @@ int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
     }else if (AllExecutors[i]->local_timestamp > local_timestamp) {
       TransactionStatus expected = TransactionStatus::inflight;
       if (!AllExecutors[i]->status_.compare_exchange_strong(expected, TransactionStatus::aborted,memory_order_acq_rel, memory_order_acquire)){
-        if(expected == TransactionStatus::aborted){
-          tuple->del_owner(i);
-          counter --;
-          continue;
+        if (expected != TransactionStatus::aborted) {
+          this->status_.store(TransactionStatus::aborted, memory_order_release);
+          return counter;
         }
-
-        this->status_.store(TransactionStatus::aborted, memory_order_release);
-        return counter;
-
-      }else{ //CAS成功!!
-        tuple->del_owner(i);
-        counter --;
       }
+
+      tuple->del_owner(i);
+      counter --;
     }
   }
   return counter;
