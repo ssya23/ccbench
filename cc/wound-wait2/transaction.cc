@@ -936,15 +936,14 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     }
 
     if(result >= 0){
-      bool from_free = (result == 0);
-      result++;
       this->wait_entry.removeFrom(tuple);
       if (tuple->waiters_head != nullptr) {
         this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-        if (from_free) tuple->owner_older = true; // 自分がcounte=0の状態からLockを取得するときは,trueにできる.
+        tuple->owner_older = true;
       }
       else decrement_waitcount(tuple);
       tuple->add_owner(thid_);
+      result++;
       tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
     }
