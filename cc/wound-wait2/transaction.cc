@@ -690,13 +690,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       utuple->lock_.latch_unlock(upcounter);
 
-      if(this->status_ == TransactionStatus::aborted){
-        int r = utuple->lock_.latch_lock();
-        this->wait_entry.removeFrom(utuple);
-        utuple->lock_.latch_unlock(r);
-        return Status::ERROR_LOCK_FAILED;
-      }
-
       LockResult result = wait_upgradeop(utuple);
       if(result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
       if(result == LockResult::NOT_FOUND) return Status::WARN_NOT_FOUND;
