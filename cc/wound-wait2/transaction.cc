@@ -402,6 +402,22 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       // WaitListに誰もいない
       if (utuple->waiters_head == nullptr){
+        //Upgradeができない. "upcounter 1以上"になっている.
+        //自分に対して誰かがWaitしている.
+        if (this->waiter_count_.load() > 0) {
+          if (upcounter > 1) {
+            upcounter = wound_readlock(utuple, upcounter);
+
+            if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+              utuple->lock_.latch_unlock(upcounter);
+              return Status::ERROR_LOCK_FAILED;
+            }
+            if (upcounter > 1) utuple->owner_older = true;
+          }
+
+        //自分に対して誰かがWaitしていないためwoundしていない.
+        }else if (upcounter > 1) utuple->owner_older = false; // WoundせずにWaitする
+
         // Lock取得可能. Upgradeできる
         if(upcounter == 1){
           upcounter = -1;
@@ -409,32 +425,24 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, std::move(body),OpType::UPDATE);
           goto FINISH_WRITE;
+        }
 
-        //Upgradeができない. "upcounter 1以上"になっている.
-        //自分に対して誰かがWaitしている.
-        }else if(this->waiter_count_.load() > 0){
+        this->wait_entry.insertInto(utuple, local_timestamp);
+        //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
+        increment_waitcount(utuple);
+
+      //WaitListに誰かすでに存在している.
+      }else if(utuple->waiters_head->ts > this->local_timestamp){
+        //upcounter>1でWriteLock取得ができない.
+        if (upcounter > 1) {
           upcounter = wound_readlock(utuple, upcounter);
-      
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
-
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = true;
-
-          //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-          increment_waitcount(utuple);
-
-        //自分に対して誰かがWaitしていないためwoundしていない.
-        }else{
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = false; // WoundせずにWaitする
-          increment_waitcount(utuple);
+          if (upcounter > 1) utuple->owner_older = true;
         }
 
-      //WaitListに誰かすでに存在している.
-      }else if(utuple->waiters_head->ts > this->local_timestamp){
         if(upcounter == 1){
           upcounter = -1;
           utuple->add_owner(thid_);
@@ -442,17 +450,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, std::move(body),OpType::UPDATE);
           goto FINISH_WRITE;
-
-        //upcounter>1でWriteLock取得ができない.
-        }else{
-          upcounter = wound_readlock(utuple, upcounter);
-          if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            utuple->lock_.latch_unlock(upcounter);
-            return Status::ERROR_LOCK_FAILED;
-          }
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = true;
         }
+
+        this->wait_entry.insertInto(utuple, local_timestamp);
 
       }else this->wait_entry.insertInto(utuple, local_timestamp);
 
@@ -637,6 +637,20 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       // WaitListに誰もいない
       if (utuple->waiters_head == nullptr){
+        //Upgradeができない. "upcounter > 1"になっている.
+        if (this->waiter_count_.load() > 0) {
+          if (upcounter > 1) {
+            upcounter = wound_readlock(utuple, upcounter);
+            if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
+              utuple->lock_.latch_unlock(upcounter);
+              return Status::ERROR_LOCK_FAILED;
+            }
+            if (upcounter > 1) utuple->owner_older = true;
+          }
+
+        //自分が他のTXからWaitされていないため必ずしもWoundせずにWaitする
+        }else if (upcounter > 1) utuple->owner_older = false;
+
         // Lock取得可能. Upgradeできる
         if(upcounter == 1){
           upcounter = -1;
@@ -644,29 +658,24 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, OpType::DELETE);
           goto FINISH_DELETE;
+        }
 
-        //Upgradeができない. "upcounter > 1"になっている.
-        }else if(this->waiter_count_.load() > 0){
+        this->wait_entry.insertInto(utuple, local_timestamp);
+        //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
+        increment_waitcount(utuple);
+
+      //WaitListに誰かすでに存在している.
+      }else if(utuple->waiters_head->ts > this->local_timestamp){
+        //upcounter>1でWriteLock取得ができない.
+        if (upcounter > 1) {
           upcounter = wound_readlock(utuple, upcounter);
           if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
             utuple->lock_.latch_unlock(upcounter);
             return Status::ERROR_LOCK_FAILED;
           }
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = true;
-          
-          //自分がWaitListの最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-          increment_waitcount(utuple);
-
-        //自分が他のTXからWaitされていないため必ずしもWoundせずにWaitする
-        }else{
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = false; 
-          increment_waitcount(utuple);
+          if (upcounter > 1) utuple->owner_older = true;
         }
 
-      //WaitListに誰かすでに存在している.
-      }else if(utuple->waiters_head->ts > this->local_timestamp){
         if(upcounter == 1){
           upcounter = -1;
           utuple->add_owner(thid_);
@@ -674,17 +683,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           utuple->lock_.latch_unlock(upcounter);
           write_set_.emplace_back(s, key, utuple, OpType::DELETE);
           goto FINISH_DELETE;
-
-        //upcounter>1でWriteLock取得ができない.
-        }else{
-          upcounter = wound_readlock(utuple, upcounter);
-          if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
-            utuple->lock_.latch_unlock(upcounter);
-            return Status::ERROR_LOCK_FAILED;
-          }
-          this->wait_entry.insertInto(utuple, local_timestamp);
-          utuple->owner_older = true;
         }
+
+        this->wait_entry.insertInto(utuple, local_timestamp);
 
       }else this->wait_entry.insertInto(utuple, local_timestamp);
 
