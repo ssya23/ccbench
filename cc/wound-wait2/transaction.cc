@@ -111,7 +111,7 @@ bool TxExecutor::commit() {
 	bool success = status_.compare_exchange_strong(expected, TransactionStatus::committed, memory_order_acq_rel, memory_order_acquire);
 	if (!success) return false; //tpcc.hh or ycsb.hh内でcommit()の戻り値がfalseならabort()が実行される. 
 
-  /* 取得したLock&ownersは全てこのthreadが解放する */
+  /* 取得したLock&owners_bitmapは全てこのthreadが解放する */
 
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;

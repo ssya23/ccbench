@@ -45,7 +45,7 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  */
 void TxExecutor::abort() {
 
-  /* Release locks wait-dieでは他のTXが自分のLockを解放することはないので, 取得したLockとowners_bitmapは全てこのTXが解放する. */
+  /* 取得したLockとowners_bitmapは全てこのTXが解放する. */
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		Tuple* tuple = (*itr).rcdptr_;
 	  int prev = tuple->lock_.latch_lock();
@@ -352,9 +352,8 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
         goto FINISH_WRITE;
 
-      //他のTXもReadLockをとっていた
       }else if(upcounter >= 1){
-        // 自分よりtimestampが小さいownerが一人でもいれば自分がdieする. 
+         
         if(has_older_owner((*rItr).rcdptr_, this->local_timestamp)){
           this->status_ = TransactionStatus::aborted;
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
@@ -424,7 +423,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   if (!acquired) {
     LockResult result = wait_writeop(tuple);
     if (result == LockResult::NOT_FOUND)return Status::WARN_NOT_FOUND;
-  
   }
 
   this->write_set_.emplace_back(s, key, tuple, std::move(body), OpType::UPDATE);
@@ -653,10 +651,7 @@ void TxExecutor::leaderWork() {
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
 	while(true){
 
-    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      _mm_pause();
-      continue;
-    }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
     // これ以降はheadの操作
     if(tuple->delete_flag == true) {
@@ -697,10 +692,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 	while(true){
 
-    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      _mm_pause();
-      continue;
-    }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
     // headの操作
     if(tuple->delete_flag == true){
@@ -739,10 +731,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 	while(true){
 
-    if (!this->wait_entry.is_head.load(memory_order_acquire)) {
-      _mm_pause();
-      continue;
-    }
+    if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
