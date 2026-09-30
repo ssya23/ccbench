@@ -17,8 +17,6 @@
 
 using namespace std;
 
-extern void display_procedure_vector(std::vector<Procedure>& pro);
-
 inline SetElement<Tuple>* TxExecutor::searchReadSet(Storage s,
                                                     std::string_view key) {
   for (auto& re : read_set_) {
