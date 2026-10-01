@@ -855,8 +855,10 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     if (expected < 0) {
       // head(自分)より小さいtimestampを持つTXのみがロックをとっているという保証がない and 誰かが自分を待っておりサイクルの最小値になりうる → woundを試みる
       bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
-      if (waited && has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
-      else { _mm_pause(); continue; }
+      if (waited) {
+        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+      }
+      if (!try_wound) { _mm_pause(); continue; }
     }
 
     int result = tuple->lock_.latch_lock();
@@ -928,8 +930,10 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
     if (expected != 0) {
       //headよりも小さいTSを持つTXのみLockを所持しているという保証がない and サイクルの最小値になりうる
       bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
-      if (waited && has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
-      else { _mm_pause(); continue; }
+      if (waited) {
+        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+      }
+      if (!try_wound) { _mm_pause(); continue; }
     }
 
     int result = tuple->lock_.latch_lock();
@@ -1011,8 +1015,10 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
     if (expected != 1) {
       //upgrade時はheadに並ぶ際に自分自身も現在ownerとしてwaiter_count_を+1されているため,自分自身の分の+1を差し引いて判定する(> 1).
       bool waited = this->waiter_count_.load() > 1 || this->wait_entry.next != nullptr;
-      if (waited && has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
-      else { _mm_pause(); continue; }
+      if (waited) {
+        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+      }
+      if (!try_wound) { _mm_pause(); continue; }
     }
 
     int result = tuple->lock_.latch_lock();
