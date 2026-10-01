@@ -247,18 +247,20 @@ static inline bool has_younger_owner(Tuple* tuple, int thid, int ts) {
   return false;
 }
 
+static inline bool has_older_waiter(Tuple* tuple, int ts) {
+  return tuple->waiters_head != nullptr && tuple->waiters_head->ts < ts;
+}
+
 LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter) {
   TupleBody body;
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
-  // WaitListに誰もいない
-  if(tuple->waiters_head == nullptr){
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
+    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
 
-    //WriteLockが取得されている
-    if (rcounter == -1){
-      // 誰かが自分を待っている → wound実行
-      if (this->waiter_count_.load() > 0) {
+    if (rcounter == -1) {
+      if (waited) {
         LockResult woundresult = wound_writelock(tuple);
 
         if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(rcounter); return LockResult::ABORTED; }
@@ -270,34 +272,13 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     if (rcounter >= 0) {
       tuple->add_owner(thid_);
       rcounter++;
+      if (tuple->waiters_head != nullptr) this->waiter_count_.fetch_add(1, memory_order_acq_rel);
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
     }
 
-    //自分が最初のwaiterになる → 現在Lockを保持しているTXのwaiter_count_を上げる
-    increment_waitcount(tuple);
-
-  //すでにWaitListに他のTXが存在している.
-  }else if(tuple->waiters_head->ts > this->local_timestamp){
-
-    //誰かが自分を待っている状況が成立するのでwoundする.
-    if(rcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
-
-      if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(rcounter); return LockResult::ABORTED; }
-      else if (woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return LockResult::NOT_FOUND; }
-      else if (woundresult == LockResult::SUCCESS) rcounter = 0;
-    }
-
-    if(rcounter >= 0){
-      tuple->add_owner(thid_);
-      rcounter++;
-      this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-      tuple->lock_.latch_unlock(rcounter);
-      goto FINISH_READ_LOCK;
-    }
+    if (tuple->waiters_head == nullptr) increment_waitcount(tuple);
   }
-  //else(head_TS < 自分のTS)なら特に何もしない.
 
   this->wait_entry.insertInto(tuple, this->local_timestamp);
   tuple->lock_.latch_unlock(rcounter);
@@ -402,10 +383,10 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       Tuple* utuple = (*rItr).rcdptr_;
 
-      // WaitListに誰もいない
-      if (utuple->waiters_head == nullptr){
-        // 誰かが自分に対してWaitしている.
-        if (this->waiter_count_.load() > 0) {
+      if (!has_older_waiter(utuple, this->local_timestamp)) {
+        bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+
+        if (waited) {
           if (upcounter > 1) {
             upcounter = wound_readlock(utuple, upcounter);
 
@@ -422,28 +403,10 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           goto FINISH_WRITE;
         }
 
-        this->wait_entry.insertInto(utuple, local_timestamp);
-        increment_waitcount(utuple);
+        if (utuple->waiters_head == nullptr) increment_waitcount(utuple);
+      }
 
-      //WaitListに誰かすでに存在している.
-      }else if(utuple->waiters_head->ts > this->local_timestamp){
-        //upcounter>1でWriteLock取得ができない.
-        if (upcounter > 1){
-          upcounter = wound_readlock(utuple, upcounter);
-          if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){utuple->lock_.latch_unlock(upcounter);return Status::ERROR_LOCK_FAILED;}
-        }
-
-        if(upcounter == 1){
-          upcounter = -1;
-          utuple->add_owner(thid_);
-          utuple->lock_.latch_unlock(upcounter);
-          write_set_.emplace_back(s, key, utuple, std::move(body),OpType::UPDATE);
-          goto FINISH_WRITE;
-        }
-
-        this->wait_entry.insertInto(utuple, local_timestamp);
-
-      }else this->wait_entry.insertInto(utuple, local_timestamp);
+      this->wait_entry.insertInto(utuple, local_timestamp);
 
       utuple->lock_.latch_unlock(upcounter);
 
@@ -480,10 +443,10 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   bool acquired;
   acquired = false;
 
-  //WaitListに誰もいない.
-  if(tuple->waiters_head == nullptr){
-    // 自分に対して誰かが待っている.->即座にwound発動
-    if(this->waiter_count_.load() > 0){
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
+    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+
+    if (waited) {
       if (wcounter == -1){
         LockResult woundresult = wound_writelock(tuple);
 
@@ -501,32 +464,12 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       tuple->add_owner(thid_);
       wcounter = -1;
       acquired = true;
+      if (tuple->waiters_head != nullptr) this->waiter_count_.fetch_add(1, memory_order_acq_rel);
     }else{
-      increment_waitcount(tuple);
+      if (tuple->waiters_head == nullptr) increment_waitcount(tuple);
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
 
-  //WaitListに誰かいる.
-  }else if(tuple->waiters_head->ts > this->local_timestamp){
-    if(wcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
-      if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
-      else if (woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
-      else if (woundresult == LockResult::SUCCESS) wcounter = 0;
-
-    }else if (wcounter >= 1) {
-      wcounter = wound_readlock(tuple, wcounter);
-      if (this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
-    }
-
-    if (wcounter == 0) {
-      tuple->add_owner(thid_);
-      wcounter = -1;
-      acquired = true;
-      this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-    }else this->wait_entry.insertInto(tuple, local_timestamp);
-
-  //WaitListに誰か存在している.自分はheadよりも後ろに並ぶ
   }else this->wait_entry.insertInto(tuple, local_timestamp);
 
   tuple->lock_.latch_unlock(wcounter);
@@ -612,10 +555,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       Tuple* utuple = (*rItr).rcdptr_;
 
-      // WaitListに誰もいない
-      if (utuple->waiters_head == nullptr){
-    
-        if (this->waiter_count_.load() > 0) {
+      if (!has_older_waiter(utuple, this->local_timestamp)) {
+        bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+
+        if (waited) {
           if (upcounter > 1) {
             upcounter = wound_readlock(utuple, upcounter);
             if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
@@ -634,28 +577,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           goto FINISH_DELETE;
         }
 
-        this->wait_entry.insertInto(utuple, local_timestamp);
-        increment_waitcount(utuple);
+        if (utuple->waiters_head == nullptr) increment_waitcount(utuple);
+      }
 
-      //WaitListに誰かすでに存在している.
-      }else if(utuple->waiters_head->ts > this->local_timestamp){
-        //upcounter>1でWriteLock取得ができない.
-        if (upcounter > 1) {
-          upcounter = wound_readlock(utuple, upcounter);
-          if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){utuple->lock_.latch_unlock(upcounter);return Status::ERROR_LOCK_FAILED;}
-        }
-
-        if(upcounter == 1){
-          upcounter = -1;
-          utuple->add_owner(thid_);
-          utuple->lock_.latch_unlock(upcounter);
-          write_set_.emplace_back(s, key, utuple, OpType::DELETE);
-          goto FINISH_DELETE;
-        }
-
-        this->wait_entry.insertInto(utuple, local_timestamp);
-
-      }else this->wait_entry.insertInto(utuple, local_timestamp);
+      this->wait_entry.insertInto(utuple, local_timestamp);
 
       utuple->lock_.latch_unlock(upcounter);
 
@@ -688,9 +613,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   bool acquired;
   acquired = false;
 
-  //WaitListに誰もいない.
-  if(tuple->waiters_head == nullptr){
-    if(this->waiter_count_.load() > 0){
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
+    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+
+    if (waited) {
       if(wcounter == -1){
         LockResult woundresult = wound_writelock(tuple);
 
@@ -708,31 +634,11 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       tuple->add_owner(thid_);
       wcounter = -1;
       acquired = true;
+      if (tuple->waiters_head != nullptr) this->waiter_count_.fetch_add(1, memory_order_acq_rel);
     }else{
-      increment_waitcount(tuple);
+      if (tuple->waiters_head == nullptr) increment_waitcount(tuple);
       this->wait_entry.insertInto(tuple, local_timestamp);
     }
-
-  }else if(tuple->waiters_head->ts > this->local_timestamp){
-    if(wcounter == -1){
-      LockResult woundresult = wound_writelock(tuple);
-
-      if(woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
-      else if(woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
-      else if(woundresult == LockResult::SUCCESS) wcounter = 0;
-
-    // wcounter >= 1
-    }else if(wcounter >= 1){
-      wcounter = wound_readlock(tuple, wcounter);
-      if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
-    }
-
-    if(wcounter == 0){
-      tuple->add_owner(thid_);
-      wcounter = -1;
-      acquired = true;
-      this->waiter_count_.fetch_add(1, memory_order_acq_rel);
-    }else this->wait_entry.insertInto(tuple, local_timestamp);
 
   }else this->wait_entry.insertInto(tuple, local_timestamp);
 
