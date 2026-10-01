@@ -225,6 +225,10 @@ FINISH_READ:
   return Status::OK;
 }
 
+static inline bool has_older_waiter(Tuple* tuple, int ts) {
+  return tuple->waiters_head != nullptr && tuple->waiters_head->ts < ts;
+}
+
 LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter) {
   TupleBody body;
 
@@ -234,7 +238,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
    * よって自分がheadより新しいなら、保持者は全員自分より古く、woundは必ず失敗する。
    * その場合はwoundを試みず、WaitListへの挿入する.  */
 
-  if(tuple->waiters_head == nullptr || (tuple->waiters_head->ts) > (this->local_timestamp)){
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
 
     if(rcounter >= 0){
       tuple->add_owner(thid_);
@@ -422,7 +426,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
   bool acquired;
   acquired = false;
-  if (tuple->waiters_head == nullptr || tuple->waiters_head->ts > this->local_timestamp) {
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
     if (wcounter == 0) {
       tuple->add_owner(thid_);
       wcounter = -1;
@@ -587,7 +591,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
   bool acquired;
   acquired = false;
-  if (tuple->waiters_head == nullptr || tuple->waiters_head->ts > this->local_timestamp) {
+  if (!has_older_waiter(tuple, this->local_timestamp)) {
 
     if (wcounter == 0) {
       tuple->add_owner(thid_);
