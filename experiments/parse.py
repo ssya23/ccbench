@@ -2,6 +2,9 @@
 """results/<実験名>/<プロトコル>/<条件>/run*.log を集計し、実験ディレクトリ直下に
 runs.csv (1行=1回の実行)、summary.csv (1行=プロトコル x 条件、tps が真ん中の回の値)、
 wound_matrix.csv (1行=wound 行列の1マス、tps が真ん中の回の値、ログに行列がある場合のみ) を書く。
+条件は <条件> ディレクトリ名 (例: thd=4_theta=0.99) と、ログ中の LOG_COND_KEYS の行から取る。
+<プロトコル> の上下に条件のディレクトリを何段挟んでもよい
+(例: results/ycsb/ope=16/silo/thd=4_theta=0.99/run1.log)。名前に = を含む段が条件、含まない段がプロトコル。
 
 使い方: python3 experiments/parse.py results/tpcc_thread [results/...]
 """
@@ -25,6 +28,10 @@ PER_TX_KEYS = {
     "wounds issued:": "wounds_issued",
     "abort rate:": "abort_rate",
 }
+# ログ中の行頭の文字列 -> 条件の列名。ディレクトリ名に無い条件もログから拾う。
+LOG_COND_KEYS = {
+    "#FLAGS_ycsb_max_ope:": "ope",
+}
 # 条件の列の並び。ここにないものは名前順で後ろに付く。
 COND_ORDER = ["thd", "wh"]
 
@@ -37,8 +44,9 @@ def to_num(s):
 
 
 def parse_log(path):
-    """1つのログから (項目 -> 値, wound 行列のマスのリスト) を返す。"""
+    """1つのログから (項目 -> 値, wound 行列のマスのリスト, 条件 -> 値) を返す。"""
     metrics = {}
+    cond = {}
     cells = []  # (wounder, victim, storage, count)
     tx = None
     matrix = None  # 行列を読んでいる途中の状態
@@ -70,6 +78,9 @@ def parse_log(path):
                     cells.append((matrix["wounder"], name, col, int(v)))
             continue
 
+        for prefix, name in LOG_COND_KEYS.items():
+            if line.startswith(prefix):
+                cond[name] = to_num(line[len(prefix):].split()[0])
         if line.startswith("Transaction type:"):
             tx = line.split(":", 1)[1].strip()
             continue
@@ -79,7 +90,7 @@ def parse_log(path):
                 value = to_num(line[len(prefix):].split()[0])
                 metrics[name if tx is None else f"{tx}_{name}"] = value
                 break
-    return metrics, cells
+    return metrics, cells, cond
 
 
 def parse_cond(name):
@@ -92,16 +103,27 @@ def fmt(v):
 
 def collect(exp_dir):
     runs = []  # dict: cc, cond, run, ok, metrics, cells
-    for cc_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
-        for cond_dir in sorted(p for p in cc_dir.iterdir() if p.is_dir()):
-            cond = parse_cond(cond_dir.name)
-            for log in sorted(cond_dir.glob("run*.log")):
-                metrics, cells = parse_log(log)
-                ok = "tps" in metrics
-                if not ok:
-                    print(f"warning: {log} に結果がありません (失敗またはタイムアウト)。集計から外します。")
-                runs.append({"cc": cc_dir.name, "cond": cond, "run": int(log.stem[3:]),
-                             "ok": ok, "metrics": metrics, "cells": cells})
+    for log in sorted(exp_dir.rglob("run*.log")):
+        parts = log.parent.relative_to(exp_dir).parts
+        ccs = [d for d in parts if "=" not in d]
+        if len(ccs) != 1:
+            print(f"warning: {log} からプロトコル名を 1 つに決められません。集計から外します。")
+            continue
+        dir_cond = {}
+        for d in parts:
+            if "=" in d:
+                dir_cond.update(parse_cond(d))
+        metrics, cells, log_cond = parse_log(log)
+        for k in dir_cond.keys() & log_cond.keys():
+            if dir_cond[k] != log_cond[k]:
+                print(f"warning: {log} の {k} がディレクトリ名 ({dir_cond[k]}) とログ "
+                      f"({log_cond[k]}) で違います。ログの値を使います。")
+        cond = {**dir_cond, **log_cond}
+        ok = "tps" in metrics
+        if not ok:
+            print(f"warning: {log} に結果がありません (失敗またはタイムアウト)。集計から外します。")
+        runs.append({"cc": ccs[0], "cond": cond, "run": int(log.stem[3:]),
+                     "ok": ok, "metrics": metrics, "cells": cells})
     return runs
 
 
