@@ -437,6 +437,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           tuple->add_owner(thid_);
           wcounter = -1;
           acquired = true;
+        }
 
       }else if(wcounter >= 1){
         wcounter = wound_readlock(tuple, wcounter);
