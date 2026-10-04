@@ -234,11 +234,10 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
-  /* このtupleのLock保持者のtsは、必ずwaiters_head->tsより小さい(=古い)ことが保証されている
-   * よって自分がheadより新しいなら、保持者は全員自分より古く、woundは必ず失敗する。
-   * その場合はwoundを試みず、WaitListへの挿入する.  */
+  /* このtupleのLock保持者のtimestampは必ずWaitListのheadのTXのtimestampより小さいことが保証されている
+   * よって,自分がheadよりtimestampが大きいならLock保持者は全員自分より古くwoundする必要がない */
 
-  if (!has_older_waiter(tuple, this->local_timestamp)) {
+  if(!has_older_waiter(tuple, this->local_timestamp)){
 
     if(rcounter >= 0){
       tuple->add_owner(thid_);
@@ -246,26 +245,21 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
 
-    //WriteLockが取られていた
     }else if(rcounter == -1){ 
       LockResult woundresult;
       woundresult = wound_writelock(tuple);
-
       if(woundresult == LockResult::ABORTED){
         tuple->lock_.latch_unlock(rcounter);
         return LockResult::ABORTED;
-
       }else if(woundresult == LockResult::NOT_FOUND){
         rcounter = 0;
         tuple->lock_.latch_unlock(rcounter);
         return LockResult::NOT_FOUND;
-
       }else if(woundresult == LockResult::SUCCESS){
         rcounter = 1;
         tuple->add_owner(thid_);
         tuple->lock_.latch_unlock(rcounter);
         goto FINISH_READ_LOCK;
-
       }
     }
   }
@@ -364,7 +358,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       /* このrecordのReadLockは自分が持っているはずだが、woundされている場合はwound_readlock()が他スレッドから既に解放している(ownersを落としcounterを減らす)
        * よってstatusを見ないと、upcounter==1が自分によるものだとは断定できない。
-       *
        * 確認後にwoundされても問題ない。status_はlatch外から変えられるが、counterとownersの変更にはlatchが要るので、このlatch区間では自分のReadLockは残る*/
       TransactionStatus ts = status_.load(std::memory_order_acquire);
       if(ts == TransactionStatus::aborted){
@@ -372,24 +365,22 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         return Status::ERROR_LOCK_FAILED;
       }
 
-      // waiters_headがnullptr or headよりもtimestampが小さいかどうかの確認は必要ない.自分がReadLockを持っているためheadは自分よりtimestampが大きい.
+      // 自分がReadLockを持っているため自分のstatusがabortedになっていない限り,headは自分よりtimestampが大きい.
+      // そのため, has_older_waiterは必要ない
 
-      if (upcounter == 1){
+      if(upcounter == 1){
         upcounter = -1;
         (*rItr).rcdptr_->add_owner(thid_);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
         write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
         goto FINISH_WRITE;
 
-      //他のTXもReadLockをとっていた
       }else if(upcounter >= 1){
         upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
-
         if(this->status_ == TransactionStatus::aborted){
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
         }
-
         this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
 
@@ -426,7 +417,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
   bool acquired;
   acquired = false;
-  if (!has_older_waiter(tuple, this->local_timestamp)) {
+  if(!has_older_waiter(tuple, this->local_timestamp)){
     if(wcounter == 0){
       tuple->add_owner(thid_);
       wcounter = -1;
@@ -435,22 +426,17 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       if(wcounter == -1){
         LockResult woundresult;
         woundresult = wound_writelock(tuple);
-
         if(woundresult == LockResult::ABORTED){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
-
         }else if(woundresult == LockResult::NOT_FOUND){
           wcounter = 0;
           tuple->lock_.latch_unlock(wcounter);
           return Status::WARN_NOT_FOUND;
-
         }else if(woundresult == LockResult::SUCCESS){
           tuple->add_owner(thid_);
           wcounter = -1;
           acquired = true;
-
-        }else if(woundresult == LockResult::FAILED){}
 
       }else if(wcounter >= 1){
         wcounter = wound_readlock(tuple, wcounter);
@@ -552,7 +538,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       }else if(upcounter >= 1){
         upcounter = wound_readlock((*rItr).rcdptr_,upcounter);
-
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
