@@ -228,37 +228,31 @@ FINISH_READ:
   return Status::OK;
 }
 
-/* 待ち行列の先頭が old_head から new_head に変わったときに呼ぶ(latch内).
- * このrecordの各ownerについて「先頭が自分より大きいtimestampを持つか(0/1)」を変わる前と後で比べ, その差をwaiter_count_に足す.
- * 先頭が変わらなければ誰の値も変わらないので何もしない. */
-static inline void on_head_change(Tuple* tuple, const WaitEntry* old_head, const WaitEntry* new_head) {
-  if (old_head == new_head) return;
-  for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+static inline void on_head_change(Tuple* tuple, WaitEntry* old_head, WaitEntry* new_head){
+  if(old_head == new_head) return;
+  for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
     TxExecutor* o = AllExecutors[std::countr_zero(bits)];
-    int d = (new_head != nullptr && new_head->ts > o->local_timestamp)
-          - (old_head != nullptr && old_head->ts > o->local_timestamp);
-    if (d != 0) o->waiter_count_.fetch_add(d, std::memory_order_acq_rel);
+    int d = (new_head != nullptr && new_head->ts > o->local_timestamp) - (old_head != nullptr && old_head->ts > o->local_timestamp);
+    if(d != 0) o->waiter_count_.fetch_add(d, std::memory_order_acq_rel);
   }
 }
 
-// WaitListに入る(latch内). 先頭が変わったらownerのwaiter_count_を直す.
 void TxExecutor::enqueue(Tuple* tuple) {
   WaitEntry* old_head = tuple->waiters_head;
   this->wait_entry.insertInto(tuple, this->local_timestamp);
   on_head_change(tuple, old_head, tuple->waiters_head);
 }
 
-// WaitListから出る(latch内). 先頭が変わったらownerのwaiter_count_を直す.
 void TxExecutor::dequeue(Tuple* tuple) {
   WaitEntry* old_head = tuple->waiters_head;
   this->wait_entry.removeFrom(tuple);
   on_head_change(tuple, old_head, tuple->waiters_head);
 }
 
-// 自分が新しくownerになった直後に呼ぶ(latch内). 先頭が自分より大きいtimestampを持てば自分を+1する.
 void TxExecutor::self_increment(Tuple* tuple) {
-  if (tuple->waiters_head != nullptr && tuple->waiters_head->ts > this->local_timestamp)
+  if (tuple->waiters_head != nullptr && tuple->waiters_head->ts > this->local_timestamp){
     this->waiter_count_.fetch_add(1, std::memory_order_acq_rel);
+  }
 }
 
 static inline bool has_younger_owner(Tuple* tuple, int thid, int ts) {
@@ -274,19 +268,19 @@ static inline bool has_older_waiter(Tuple* tuple, int ts) {
   return tuple->waiters_head != nullptr && tuple->waiters_head->ts < ts;
 }
 
-LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter) {
+LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter){
   TupleBody body;
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
   if(!has_older_waiter(tuple, this->local_timestamp)){
-    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
 
     if(rcounter == -1){
+      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
       if(waited){
         LockResult woundresult = wound_writelock(tuple);
-        if(woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(rcounter); return LockResult::ABORTED; }
-        else if(woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return LockResult::NOT_FOUND; }
+        if(woundresult == LockResult::ABORTED){ tuple->lock_.latch_unlock(rcounter); return LockResult::ABORTED; }
+        else if(woundresult == LockResult::NOT_FOUND){ tuple->lock_.latch_unlock(0); return LockResult::NOT_FOUND; }
         else if(woundresult == LockResult::SUCCESS) rcounter = 0;
       }
     }
@@ -359,7 +353,7 @@ Status TxExecutor::scan(const Storage s, std::string_view left_key,
 
     LockResult readresult = read_internal(s, itr->body_.get_key(), itr, rcounter);
     if(readresult == LockResult::NOT_FOUND) continue;
-    if (readresult == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
+    if(readresult == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
     result.emplace_back(&(read_set_.back().body_));
   }
 
@@ -394,7 +388,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       /* このrecordのReadLockは自分が持っているはずだが、woundされている場合はwound_readlock()が他スレッドから既に解放している
        * よってstatusを見ないと、upcounter==1が自分によるものだとは断定できない。
        *
-       * 確認後にwoundされても問題ない。status_はlatch外から変えられるが、counterとownersの変更にはlatchが要るので、このlatch区間では自分のReadLockは残る*/
+       * 確認後にwoundされても問題ない。status_はlatch外から変えられるが、counterとownersの変更にはlatchが要るので、このlatch区間では自分のReadLockは残る */
       TransactionStatus ts = status_.load(std::memory_order_acquire);
       if(ts == TransactionStatus::aborted){
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
@@ -404,16 +398,15 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       Tuple* utuple = (*rItr).rcdptr_;
 
       if(!has_older_waiter(utuple, this->local_timestamp)){
-        bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
 
-        if(waited){
-          if(upcounter > 1){
+        if(upcounter > 1){
+          bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+          if(waited){
             upcounter = wound_readlock(utuple, upcounter);
-            if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){utuple->lock_.latch_unlock(upcounter); return Status::ERROR_LOCK_FAILED;}
+            if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){ utuple->lock_.latch_unlock(upcounter); return Status::ERROR_LOCK_FAILED; }
           }
         }
-
-        // Lock取得可能. Upgradeできる
+        
         if(upcounter == 1){
           upcounter = -1;
           utuple->add_owner(thid_);
@@ -743,17 +736,17 @@ void TxExecutor::leaderWork() {
 LockResult TxExecutor::wait_readop(Tuple* tuple) {
 	while(true){
 
-    if (this->status_.load() == TransactionStatus::aborted){
+    if(this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
       dequeue(tuple);
       tuple->lock_.latch_unlock(r);
       return LockResult::ABORTED;
     }
 
-    if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue;}
+    if(!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
     // headの操作
-    if(tuple->delete_flag == true) {
+    if(tuple->delete_flag == true){
       int r = tuple->lock_.latch_lock();
       dequeue(tuple);
       tuple->lock_.latch_unlock(r);
@@ -764,7 +757,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     int expected = tuple->lock_.counter.load(memory_order_acquire);
 
     bool try_wound = false;
-    if (expected < 0) {
+    if(expected < 0){
       // head(自分)より小さいtimestampを持つTXのみがロックをとっているという保証がない and 誰かが自分を待っておりサイクルの最小値になりうる → woundを試みる
       bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
       if (waited) {
@@ -782,7 +775,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     }
 
     //latch内でまだheadなのかどうかを調べる.
-    if (tuple->waiters_head != &this->wait_entry) {
+    if(tuple->waiters_head != &this->wait_entry){
       tuple->lock_.latch_unlock(result);
       continue;
     }
