@@ -232,8 +232,9 @@ static inline void on_head_change(Tuple* tuple, WaitEntry* old_head, WaitEntry* 
   if(old_head == new_head) return;
   for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
     TxExecutor* o = AllExecutors[std::countr_zero(bits)];
+    // (正しい値 - 今の値)分をwaiter_count_に反映
     int d = (new_head != nullptr && new_head->ts > o->local_timestamp) - (old_head != nullptr && old_head->ts > o->local_timestamp);
-    if(d != 0) o->waiter_count_.fetch_add(d, std::memory_order_acq_rel);
+    if (d != 0) o->waiter_count_.fetch_add(d, std::memory_order_acq_rel);
   }
 }
 
@@ -454,16 +455,19 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   acquired = false;
 
   if(!has_older_waiter(tuple, this->local_timestamp)){
-    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
 
-    if(waited){
-      if(wcounter == -1){
+    if(wcounter == -1){
+      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      if(waited){
         LockResult woundresult = wound_writelock(tuple);
         if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
-        else if (woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
-        else if (woundresult == LockResult::SUCCESS) wcounter = 0;
-
-      }else if(wcounter >= 1){
+        else if(woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
+        else if(woundresult == LockResult::SUCCESS) wcounter = 0;
+      }
+    
+    }else if(wcounter >= 1){
+      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      if(waited){
         wcounter = wound_readlock(tuple, wcounter);
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
       }
@@ -474,10 +478,8 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       wcounter = -1;
       acquired = true;
       self_increment(tuple);
-    }else{
-      enqueue(tuple);
-    }
-
+    }else enqueue(tuple);
+  
   }else enqueue(tuple);
 
   tuple->lock_.latch_unlock(wcounter);
@@ -564,16 +566,15 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       Tuple* utuple = (*rItr).rcdptr_;
 
       if(!has_older_waiter(utuple, this->local_timestamp)){
-        bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
 
-        if(waited){
-          if(upcounter > 1){
+        if(upcounter > 1){
+          bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+          if(waited){
             upcounter = wound_readlock(utuple, upcounter);
             if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){ utuple->lock_.latch_unlock(upcounter); return Status::ERROR_LOCK_FAILED; }
           }
         }
 
-        // Lock取得可能. Upgradeできる
         if(upcounter == 1){
           upcounter = -1;
           utuple->add_owner(thid_);
@@ -617,30 +618,31 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   acquired = false;
 
   if(!has_older_waiter(tuple, this->local_timestamp)){
-    bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
 
-    if(waited){
-      if(wcounter == -1){
+    if(wcounter == -1){
+      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      if(waited){
         LockResult woundresult = wound_writelock(tuple);
         if(woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
         else if(woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
         else if(woundresult == LockResult::SUCCESS) wcounter = 0;
+      }
 
-      }else if(wcounter >= 1){
+    }else if(wcounter >= 1){
+      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      if(waited){
         wcounter = wound_readlock(tuple, wcounter);
         if (this->status_ == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
       }
     }
-
+    
     if(wcounter == 0){
       tuple->add_owner(thid_);
       wcounter = -1;
       acquired = true;
       self_increment(tuple);
-    }else{
-      enqueue(tuple);
-    }
-
+    }else enqueue(tuple);
+    
   }else enqueue(tuple);
 
   tuple->lock_.latch_unlock(wcounter);
