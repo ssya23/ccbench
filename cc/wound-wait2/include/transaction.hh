@@ -50,7 +50,7 @@ public:
   bool is_batch_ = false;
 
   alignas(CACHE_LINE_SIZE) std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
-  alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0; // 自分が保持しているタプルのうち、待ち行列の先頭が自分より大きいtimestampを持つものの数
+  alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0; // 自分より若いTXがwaitしている時
   alignas(CACHE_LINE_SIZE) WaitEntry wait_entry;
 
   TxExecutor(int thid, Result* res, const bool& quit)
