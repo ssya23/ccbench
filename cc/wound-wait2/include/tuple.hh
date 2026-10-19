@@ -19,6 +19,7 @@ public:
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
+  int waiter_size = 0; // waiters_headに並んでいるWaitEntryの数. latch下でのみ読み書きする
   uint64_t owners_bitmap = 0;
   alignas(CACHE_LINE_SIZE) TupleBody body_;
 
