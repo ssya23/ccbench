@@ -19,15 +19,15 @@ public:
   WaitEntry* waiters_head = nullptr;
   bool delete_flag = false;
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
-  int waiter_size = 0; // waiters_headに並んでいるWaitEntryの数. latch下でのみ読み書きする
-  uint64_t owners_bitmap = 0;
+  int waiter_size = 0;
+  std::atomic<uint64_t> owners_bitmap = 0;
   alignas(CACHE_LINE_SIZE) TupleBody body_;
 
   Tuple() = default;
 
-  bool has_owner(int thid) const { return (owners_bitmap >> thid) & 1ULL; }
-  void add_owner(int thid) { owners_bitmap |= (1ULL << thid); }
-  void del_owner(int thid) { owners_bitmap &= ~(1ULL << thid); }
+  bool has_owner(int thid) const { return (owners_bitmap.load(std::memory_order_relaxed) >> thid) & 1ULL; }
+  void add_owner(int thid) { owners_bitmap.store(owners_bitmap.load(std::memory_order_relaxed) | (1ULL << thid), std::memory_order_relaxed); }
+  void del_owner(int thid) { owners_bitmap.store(owners_bitmap.load(std::memory_order_relaxed) & ~(1ULL << thid), std::memory_order_relaxed); }
 
   //ベンチマーク開始前の初期データ投入（DBの一括構築）時
   void init([[maybe_unused]] size_t thid, TupleBody&& body,
