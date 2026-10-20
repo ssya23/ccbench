@@ -21,6 +21,7 @@ public:
   bool committed_record = false; // insert()経由でまだcommitされていない行はfalse。DB初期構築時の行はinit()内でtrueにする
   int waiter_size = 0;
   std::atomic<uint64_t> owners_bitmap = 0;
+  std::atomic<int> max_owner_ts = -1;
   alignas(CACHE_LINE_SIZE) TupleBody body_;
 
   Tuple() = default;
