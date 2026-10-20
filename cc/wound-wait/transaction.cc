@@ -45,17 +45,15 @@ inline SetElement<Tuple>* TxExecutor::searchWriteSet(Storage s,
  */
 void TxExecutor::abort() {
 
-  /* Release locks 
-   * abortされたTXは他のthreadに Lockとowners_bitmap を解放されている可能性がある. よって,latch取得後以下の二つの挙動のどちらかを取る
-   * 1.Lockとowners がまだ残されている場合解放する.
-   * 2.Lockとowners がすでに他のthreadによって解放されているのでskip */
+  /* abortされたTXは他のthreadに counter&owners_bitmap を解放されている可能性がある.そのため,
+   * 自分の情報がまだ残されている場合は自分で解放するが,それががすでに他のthreadによって解放されているならskip */
 
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		Tuple* tuple = (*itr).rcdptr_;
 	  int prev = tuple->lock_.latch_lock();
 
-    /* ReadSetのループでは,owners_bitmapを確認してロックをまだ保持していることを確認. 保持していれば,ロック(counter--)を解放する. 
-     * counterをチェックして counter=-1 ならskipする. Upgradeが発生していることを意味し,WriteSetのループで解放する. */
+    /* readsetのループでは,owners_bitmapを確認してロックをまだ保持していることを確認. 保持していれば,ロック(counter)を解放する.
+     * counterの値をチェックして counter=-1 ならUpgradeが発生しているためskipしwritesetのループで解放する. */
       
 		if(tuple->has_owner(thid_)){ 
 			if(prev != -1){               
@@ -110,8 +108,6 @@ bool TxExecutor::commit() {
 	TransactionStatus expected = TransactionStatus::inflight;
 	bool success = status_.compare_exchange_strong(expected, TransactionStatus::committed, memory_order_acq_rel, memory_order_acquire);
 	if (!success) return false; //tpcc.hh or ycsb.hh内でcommit()の戻り値がfalseならabort()が実行される. 
-
-  /* 取得した Lockとowners_bitmap は全てこのTXが解放する */
 
 	for (auto itr = read_set_.begin(); itr != read_set_.end(); ++itr) {
 		  Tuple* tuple = (*itr).rcdptr_;
@@ -356,17 +352,15 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         return Status::WARN_NOT_FOUND;
       }
 
-      /* このrecordのReadLockは自分が持っているはずだが、woundされている場合はwound_readlock()が他スレッドから既に解放している(ownersを落としcounterを減らす)
-       * よってstatusを見ないと、upcounter==1が自分によるものだとは断定できない。
-       * 確認後にwoundされても問題ない。status_はlatch外から変えられるが、counterとownersの変更にはlatchが要るので、このlatch区間では自分のReadLockは残る*/
+      /* このrecordのReadLockは自分が持っていることを期待している.しかし,woundされている場合は他スレッドが自分のロックを既に解放している
+       * status確認することで,upcounter==1が自分が取得したReadLockによるものだと保証することができる */
+
+      // status確認後にwoundされても問題ない。status_はlatch外から変えられるが、counterとownersの変更にはlatchが要るので、このlatch区間では自分のReadLockは残る
       TransactionStatus ts = status_.load(std::memory_order_acquire);
       if(ts == TransactionStatus::aborted){
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
         return Status::ERROR_LOCK_FAILED;
       }
-
-      // 自分がReadLockを持っているため自分のstatusがabortedになっていない限り,headは自分よりtimestampが大きい.
-      // そのため, has_older_waiterは必要ない
 
       if(upcounter == 1){
         upcounter = -1;
@@ -717,7 +711,6 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
-    // これ以降はheadの操作
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
@@ -765,7 +758,6 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 
     if (!this->wait_entry.is_head.load(memory_order_acquire)) { _mm_pause(); continue; }
 
-    // headの操作
     if(tuple->delete_flag == true){
       int r = tuple->lock_.latch_lock();
       this->wait_entry.removeFrom(tuple);
