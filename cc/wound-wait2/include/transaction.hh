@@ -114,8 +114,6 @@ public:
   void enqueue(Tuple* tuple);
 
   void dequeue(Tuple* tuple);
-
-  void self_increment(Tuple* tuple);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);

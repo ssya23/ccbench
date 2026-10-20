@@ -60,6 +60,12 @@ void TxExecutor::abort() {
 		if(tuple->has_owner(thid_)){ 
 			if(prev != -1){               
         tuple->del_owner(thid_);
+        int max_ts = -1;
+        for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
+          const int i = std::countr_zero(bits);
+          if (AllExecutors[i]->local_timestamp > max_ts) max_ts = AllExecutors[i]->local_timestamp;
+        }
+        tuple->max_owner_ts.store(max_ts, std::memory_order_relaxed);
 				prev -= 1;
 			}
 		}
@@ -78,6 +84,7 @@ void TxExecutor::abort() {
 
 		  if(tuple->has_owner(thid_)){
 				tuple->del_owner(thid_);
+				tuple->max_owner_ts.store(-1, std::memory_order_relaxed);
 				prev = 0;
 			}
 		  tuple->lock_.latch_unlock(prev);
@@ -120,6 +127,12 @@ bool TxExecutor::commit() {
 
 		  if(prev != -1){
 			  	tuple->del_owner(thid_);
+			  	int max_ts = -1;
+			  	for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
+			  	  const int i = std::countr_zero(bits);
+			  	  if (AllExecutors[i]->local_timestamp > max_ts) max_ts = AllExecutors[i]->local_timestamp;
+			  	}
+			  	tuple->max_owner_ts.store(max_ts, std::memory_order_relaxed);
 				  prev -= 1;
 		  }
 		  tuple->lock_.latch_unlock(prev);
@@ -152,6 +165,7 @@ bool TxExecutor::commit() {
 		  }
 
       tuple->del_owner(thid_);
+      tuple->max_owner_ts.store(-1, std::memory_order_relaxed);
       prev = 0;
       tuple->lock_.latch_unlock(prev);
     }
@@ -228,41 +242,22 @@ FINISH_READ:
   return Status::OK;
 }
 
-static inline void on_head_change(Tuple* tuple, WaitEntry* old_head, WaitEntry* new_head){
-  if(old_head == new_head) return;
-  for(uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1){
-    TxExecutor* o = AllExecutors[std::countr_zero(bits)];
-    // (正しい値 - 今の値)分をwaiter_count_に反映
-    int d = (new_head != nullptr && new_head->ts > o->local_timestamp) - (old_head != nullptr && old_head->ts > o->local_timestamp);
-    if (d != 0) o->waiter_count_.fetch_add(d, std::memory_order_acq_rel);
-  }
-}
-
 void TxExecutor::enqueue(Tuple* tuple) {
-  WaitEntry* old_head = tuple->waiters_head;
   this->wait_entry.insertInto(tuple, this->local_timestamp);
-  on_head_change(tuple, old_head, tuple->waiters_head);
+  tuple->waiter_size++;
+  for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
+    const int i = std::countr_zero(bits);
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 void TxExecutor::dequeue(Tuple* tuple) {
-  WaitEntry* old_head = tuple->waiters_head;
   this->wait_entry.removeFrom(tuple);
-  on_head_change(tuple, old_head, tuple->waiters_head);
-}
-
-void TxExecutor::self_increment(Tuple* tuple) {
-  if (tuple->waiters_head != nullptr && tuple->waiters_head->ts > this->local_timestamp){
-    this->waiter_count_.fetch_add(1, std::memory_order_acq_rel);
-  }
-}
-
-static inline bool has_younger_owner(Tuple* tuple, int thid, int ts) {
-  for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+  tuple->waiter_size--;
+  for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (i == thid) continue;
-    if (AllExecutors[i]->local_timestamp > ts) return true;
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
   }
-  return false;
 }
 
 static inline bool has_older_waiter(Tuple* tuple, int ts) {
@@ -277,19 +272,20 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
     if(rcounter == -1){
-      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
       if(waited){
         LockResult woundresult = wound_writelock(tuple);
         if(woundresult == LockResult::ABORTED){ tuple->lock_.latch_unlock(rcounter); return LockResult::ABORTED; }
         else if(woundresult == LockResult::NOT_FOUND){ tuple->lock_.latch_unlock(0); return LockResult::NOT_FOUND; }
         else if(woundresult == LockResult::SUCCESS) rcounter = 0;
       }
-    }
+    } 
 
     if(rcounter >= 0){
       tuple->add_owner(thid_);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
       rcounter++;
-      self_increment(tuple);
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
     }
@@ -401,7 +397,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       if(!has_older_waiter(utuple, this->local_timestamp)){
 
         if(upcounter > 1){
-          bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+          bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || utuple->waiters_head != nullptr;
           if(waited){
             upcounter = wound_readlock(utuple, upcounter);
             if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){ utuple->lock_.latch_unlock(upcounter); return Status::ERROR_LOCK_FAILED; }
@@ -457,7 +453,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
     if(wcounter == -1){
-      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
       if(waited){
         LockResult woundresult = wound_writelock(tuple);
         if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
@@ -466,7 +462,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
       }
     
     }else if(wcounter >= 1){
-      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
       if(waited){
         wcounter = wound_readlock(tuple, wcounter);
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
@@ -475,9 +471,10 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
     if(wcounter == 0){
       tuple->add_owner(thid_);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
       wcounter = -1;
       acquired = true;
-      self_increment(tuple);
     }else enqueue(tuple);
   
   }else enqueue(tuple);
@@ -516,6 +513,7 @@ Status TxExecutor::insert(Storage s, std::string_view key, TupleBody&& body) {
   tuple = new Tuple();
   tuple->init(std::move(body));
   tuple->add_owner(this->thid_);
+  if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
   // delete_flag/committed_recordはデフォルトのfalseのまま.
   // commit()でcommitted_record=trueにする. wound_writelockがcommitted_record==falseのままこの行をwoundした場合はdelete_flag=trueにする.
 
@@ -568,7 +566,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       if(!has_older_waiter(utuple, this->local_timestamp)){
 
         if(upcounter > 1){
-          bool waited = this->waiter_count_.load() > 0 || utuple->waiters_head != nullptr;
+          bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || utuple->waiters_head != nullptr;
           if(waited){
             upcounter = wound_readlock(utuple, upcounter);
             if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){ utuple->lock_.latch_unlock(upcounter); return Status::ERROR_LOCK_FAILED; }
@@ -620,7 +618,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
     if(wcounter == -1){
-      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
       if(waited){
         LockResult woundresult = wound_writelock(tuple);
         if(woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
@@ -629,7 +627,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
       }
 
     }else if(wcounter >= 1){
-      bool waited = this->waiter_count_.load() > 0 || tuple->waiters_head != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
       if(waited){
         wcounter = wound_readlock(tuple, wcounter);
         if (this->status_ == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
@@ -638,9 +636,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
     
     if(wcounter == 0){
       tuple->add_owner(thid_);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
       wcounter = -1;
       acquired = true;
-      self_increment(tuple);
     }else enqueue(tuple);
     
   }else enqueue(tuple);
@@ -761,9 +760,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     bool try_wound = false;
     if(expected < 0){
       // head(自分)より小さいtimestampを持つTXのみがロックをとっているという保証がない and 誰かが自分を待っておりサイクルの最小値になりうる → woundを試みる
-      bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || this->wait_entry.next != nullptr;
       if (waited) {
-        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+        if (tuple->max_owner_ts.load(std::memory_order_relaxed) > local_timestamp) try_wound = true;
       }
       if (!try_wound) { _mm_pause(); continue; }
     }
@@ -796,7 +795,8 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
     if(result >= 0){
       dequeue(tuple);
       tuple->add_owner(thid_);
-      self_increment(tuple);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
       result++;
       tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
@@ -830,9 +830,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
     bool try_wound = false;
     if (expected != 0) {
       //headよりも小さいTSを持つTXのみLockを所持しているという保証がない and サイクルの最小値になりうる
-      bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || this->wait_entry.next != nullptr;
       if (waited) {
-        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+        if (tuple->max_owner_ts.load(std::memory_order_relaxed) > local_timestamp) try_wound = true;
       }
       if (!try_wound) { _mm_pause(); continue; }
     }
@@ -874,7 +874,8 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       result = -1;
       dequeue(tuple);
       tuple->add_owner(thid_);
-      self_increment(tuple);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
       tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
     }
@@ -907,9 +908,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
     bool try_wound = false;
     if (expected != 1) {
-      bool waited = this->waiter_count_.load() > 0 || this->wait_entry.next != nullptr;
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || this->wait_entry.next != nullptr;
       if (waited) {
-        if (has_younger_owner(tuple, thid_, local_timestamp)) try_wound = true;
+        if (tuple->max_owner_ts.load(std::memory_order_relaxed) > local_timestamp) try_wound = true;
       }
       if (!try_wound) { _mm_pause(); continue; }
     }
@@ -949,8 +950,8 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
 LockResult TxExecutor::wound_writelock(Tuple *tuple) {
   // counterとowners/bitapはlatchよってatomicに処理される.そのため,それらの値が整合していることは保証される.
-  if (tuple->owners_bitmap != 0) {
-    const int i = std::countr_zero(tuple->owners_bitmap);
+  if (tuple->owners_bitmap.load(std::memory_order_relaxed) != 0) {
+    const int i = std::countr_zero(tuple->owners_bitmap.load(std::memory_order_relaxed));
 
     if(i != thid_){
       if(AllExecutors[i]->local_timestamp > local_timestamp){
@@ -963,6 +964,7 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
         }
 
         tuple->del_owner(i); 
+        tuple->max_owner_ts.store(-1, std::memory_order_relaxed);
         // Woundに成功したならWoundしたTXがwoundされたTXが所持していたLockを外す.しかし,あるTXがinsertをしていた場合そのTXがwoundされるとそのrecordを読んではいけない.
         // それを実現するために,commitされていないrecordにはcommitted_recordがfalseになっている.WriteLockが取られていたので,woundしたがcommitted_record=falseならばNot_Foundを返す.
         if(!tuple->committed_record){
@@ -982,21 +984,31 @@ LockResult TxExecutor::wound_writelock(Tuple *tuple) {
 }
 
 int TxExecutor::wound_readlock(Tuple *tuple, int counter) {
-  for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
+  int max_ts = -1;
+  for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
 	  if(i == thid_){ //自分をwoundしないため
+      if (local_timestamp > max_ts) max_ts = local_timestamp;
       continue;
     }else if(AllExecutors[i]->local_timestamp > local_timestamp){
       TransactionStatus expected = TransactionStatus::inflight;
       if (!AllExecutors[i]->status_.compare_exchange_strong(expected, TransactionStatus::aborted,memory_order_acq_rel, memory_order_acquire)){
         if (expected != TransactionStatus::aborted) {
           this->status_.store(TransactionStatus::aborted, memory_order_release);
+          for (; bits != 0; bits &= bits - 1) {
+            const int j = std::countr_zero(bits);
+            if (AllExecutors[j]->local_timestamp > max_ts) max_ts = AllExecutors[j]->local_timestamp;
+          }
+          tuple->max_owner_ts.store(max_ts, std::memory_order_relaxed);
           return counter;
         }
       }
       tuple->del_owner(i);
       counter --;
+    }else if(AllExecutors[i]->local_timestamp > max_ts){
+      max_ts = AllExecutors[i]->local_timestamp;
     }
   }
+  tuple->max_owner_ts.store(max_ts, std::memory_order_relaxed);
   return counter;
 }
