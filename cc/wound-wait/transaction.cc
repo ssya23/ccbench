@@ -375,6 +375,13 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
         }
+        if(upcounter == 1){
+          upcounter = -1;
+          (*rItr).rcdptr_->add_owner(thid_);
+          (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
+          write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
+          goto FINISH_WRITE;
+        }
         this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
 
@@ -438,6 +445,11 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
+        }
+        if(wcounter == 0){
+          tuple->add_owner(thid_);
+          wcounter = -1;
+          acquired = true;
         }
       }
       
@@ -537,6 +549,13 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
           return Status::ERROR_LOCK_FAILED;
         }
+        if(upcounter == 1){
+          upcounter = -1;
+          (*rItr).rcdptr_->add_owner(thid_);
+          (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
+          write_set_.emplace_back(s, key, (*rItr).rcdptr_, OpType::DELETE);
+          goto FINISH_DELETE;
+        }
 
         this->wait_entry.insertInto((*rItr).rcdptr_, local_timestamp);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
@@ -599,6 +618,11 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted){
           tuple->lock_.latch_unlock(wcounter);
           return Status::ERROR_LOCK_FAILED;
+        }
+        if(wcounter == 0){
+          tuple->add_owner(thid_);
+          wcounter = -1;
+          acquired = true;
         }
       }
 
