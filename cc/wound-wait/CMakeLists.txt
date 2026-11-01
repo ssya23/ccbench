@@ -4,4 +4,5 @@ ccbench_add_protocol(wound-wait
   OPTIONS
     DLR1
     KEY_SORT=${CCBENCH_KEY_SORT}
+    LATCH_STATS=${CCBENCH_LATCH_STATS}
 )

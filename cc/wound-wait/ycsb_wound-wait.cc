@@ -40,5 +40,9 @@ int main(int argc, char* argv[]) try {
 #endif
       });
 
+#if LATCH_STATS
+  latch_stats::dump(FLAGS_clocks_per_us);
+#endif
+
   return 0;
 } catch (const std::bad_alloc&) { ERR; }
