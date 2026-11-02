@@ -1,13 +1,13 @@
 #pragma once
 
+#include <x86intrin.h>
+
 #include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
-
-#include "tsc.hh"
 
 namespace latch_stats {
 
@@ -73,17 +73,30 @@ inline std::uint64_t bucket_hi(int b) {
   return bucket_lo(b) + (std::uint64_t{1} << (e - kSubBits)) - 1;
 }
 
-inline void on_acquired(std::uint32_t line, const char* file) {
+inline std::uint64_t tsc_begin() {
+  _mm_lfence();
+  const std::uint64_t t = __rdtsc();
+  _mm_lfence();
+  return t;
+}
+
+inline std::uint64_t tsc_end() {
+  _mm_lfence();
+  return __rdtsc();
+}
+
+inline ThreadStats* prepare(std::uint32_t line, const char* file) {
   ThreadStats& t = local();
   if (t.held) ++t.nested;
   t.held = true;
   t.line = line;
   t.file = file;
-  t.start = rdtsc();
+  return &t;
 }
 
-inline void on_release() {
-  const std::uint64_t end = rdtsc();
+inline void on_acquired(ThreadStats* t) { t->start = tsc_begin(); }
+
+inline void on_released(std::uint64_t end) {
   ThreadStats* tp = tls;
   if (tp == nullptr || !tp->held) return;
   ThreadStats& t = *tp;
