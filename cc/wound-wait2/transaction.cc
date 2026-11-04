@@ -178,11 +178,12 @@ bool TxExecutor::commit() {
 void TxExecutor::begin() {
   bool is_retry = (this->status_ == TransactionStatus::aborted);
   this->status_ = TransactionStatus::inflight;
+  uint64_t run_number = this->run_number_ + 1;
   WaiterCount next;
-  next.word = __atomic_load_n(&this->waiter_count_.word, __ATOMIC_RELAXED);
-  next.run_number = next.run_number + 1;
-  next.count = 0;
+  next.word = 0;
+  next.run_number = run_number;
   __atomic_store_n(&this->waiter_count_.word, next.word, __ATOMIC_RELAXED);
+  __atomic_store_n(&this->run_number_, run_number, __ATOMIC_RELAXED);
   if(!is_retry){
     this->local_timestamp = TimestampCounter.fetch_add(1, std::memory_order_relaxed);
   }
@@ -246,7 +247,7 @@ void TxExecutor::enqueue(Tuple* tuple) {
   tuple->waiter_size++;
   for(uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1){
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) insert_update(AllExecutors[i]->waiter_count_, 1);
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) insert_update(AllExecutors[i], 1);
   }
 }
 
@@ -255,25 +256,26 @@ void TxExecutor::dequeue(Tuple* tuple) {
   tuple->waiter_size--;
   for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) insert_update(AllExecutors[i]->waiter_count_, -1);
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) insert_update(AllExecutors[i], -1);
   }
 }
 
-void TxExecutor::insert_update(WaiterCount& target, int delta) {
+void TxExecutor::insert_update(TxExecutor* tx, int delta) {
   Update u;
-  u.target = &target;
-  u.snapshot.word = __atomic_load_n(&target.word, __ATOMIC_RELAXED);
+  u.target = &tx->waiter_count_;
+  u.run_number = __atomic_load_n(&tx->run_number_, __ATOMIC_RELAXED);
   u.delta = delta;
   updates_.push_back(u);
 }
 
 void TxExecutor::CAS(Update& update) {
-  WaiterCount cur = update.snapshot;
+  WaiterCount cur;
+  cur.word = __atomic_load_n(&update.target->word, __ATOMIC_RELAXED);
   for (;;) {
+    if (cur.run_number != update.run_number) return;
     WaiterCount next = cur;
     next.count = cur.count + update.delta;
     if (__atomic_compare_exchange_n(&update.target->word, &cur.word, next.word, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
-    if (cur.run_number != update.snapshot.run_number) return;
   }
 }
 
@@ -301,7 +303,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     if(rcounter >= 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      insert_update(this->waiter_count_, tuple->waiter_size);
+      insert_update(this, tuple->waiter_size);
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
       for (Update& u : updates_) CAS(u);
@@ -495,7 +497,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      insert_update(this->waiter_count_, tuple->waiter_size);
+      insert_update(this, tuple->waiter_size);
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -664,7 +666,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      insert_update(this->waiter_count_, tuple->waiter_size);
+      insert_update(this, tuple->waiter_size);
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -835,7 +837,7 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      insert_update(this->waiter_count_, tuple->waiter_size);
+      insert_update(this, tuple->waiter_size);
       result++;
       tuple->lock_.latch_unlock(result);
       for (Update& u : updates_) CAS(u);
@@ -932,7 +934,7 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      insert_update(this->waiter_count_, tuple->waiter_size);
+      insert_update(this, tuple->waiter_size);
       tuple->lock_.latch_unlock(result);
       for (Update& u : updates_) CAS(u);
       updates_.clear();

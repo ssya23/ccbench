@@ -32,7 +32,7 @@ union WaiterCount {
 
 struct Update {
   WaiterCount* target;
-  WaiterCount snapshot;
+  uint64_t run_number;
   int delta;
 };
 
@@ -49,6 +49,7 @@ class TxExecutor {
 public:
   alignas(CACHE_LINE_SIZE) int thid_;
   int local_timestamp;
+  uint64_t run_number_ = 0;
   Result* result_;
   Backoff backoff_;
   alignas(CACHE_LINE_SIZE)
@@ -132,7 +133,7 @@ public:
 
   void dequeue(Tuple* tuple);
 
-  void insert_update(WaiterCount& target, int delta);
+  void insert_update(TxExecutor* tx, int delta);
 
   void CAS(Update& update);
 };
