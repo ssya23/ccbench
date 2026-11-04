@@ -22,6 +22,20 @@ enum class TransactionStatus : uint8_t {
   aborted,
 };
 
+union WaiterCount {
+  uint64_t word;
+  struct {
+    int8_t count;
+    uint64_t run_number : 56;
+  };
+};
+
+struct Update {
+  WaiterCount* target;
+  WaiterCount snapshot;
+  int delta;
+};
+
 enum class LockResult {
     SUCCESS,
     ABORTED,
@@ -48,13 +62,16 @@ public:
   bool reconnoitering_ = false;
   bool is_ronly_ = false;
   bool is_batch_ = false;
+  std::vector<Update> updates_;
 
   alignas(CACHE_LINE_SIZE) std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
-  alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0; // 自分より若いTXがwaitしている時
+  alignas(CACHE_LINE_SIZE) WaiterCount waiter_count_;
   alignas(CACHE_LINE_SIZE) WaitEntry wait_entry;
 
   TxExecutor(int thid, Result* res, const bool& quit)
       : thid_(thid), result_(res), backoff_(FLAGS_clocks_per_us), quit_(quit) {
+    waiter_count_.word = 0;
+    updates_.reserve(16);
   }
 
   SetElement<Tuple>* searchReadSet(Storage s, std::string_view key);
@@ -114,6 +131,10 @@ public:
   void enqueue(Tuple* tuple);
 
   void dequeue(Tuple* tuple);
+
+  void insert_update(WaiterCount& target, int delta);
+
+  void CAS(Update& update);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);
