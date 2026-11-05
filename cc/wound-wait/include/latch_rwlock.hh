@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../../include/rwlock.hh"
+#include "pending.hh"
 
 class LatchableRWLock : public ReaderWriteLock {
 public:
@@ -31,5 +32,7 @@ public:
 
   void latch_unlock(int new_value) {
     counter.store(new_value, std::memory_order_release);
+    for (int k = 0; k < pending.n; ++k) pending.target[k]->fetch_add(pending.delta[k], std::memory_order_relaxed);
+    pending.n = 0;
   }
 };

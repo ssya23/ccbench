@@ -226,7 +226,11 @@ void TxExecutor::enqueue(Tuple* tuple) {
   this->wait_entry.insertInto(tuple, this->local_timestamp);
   for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) {
+      pending.target[pending.n] = &AllExecutors[i]->waiter_count_;
+      pending.delta[pending.n] = 1;
+      ++pending.n;
+    }
   }
 }
 
@@ -234,7 +238,11 @@ void TxExecutor::dequeue(Tuple* tuple) {
   this->wait_entry.removeFrom(tuple);
   for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) {
+      pending.target[pending.n] = &AllExecutors[i]->waiter_count_;
+      pending.delta[pending.n] = -1;
+      ++pending.n;
+    }
   }
 }
 
@@ -254,7 +262,9 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
     if(rcounter >= 0){
       tuple->add_owner(thid_);
-      this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      pending.target[pending.n] = &this->waiter_count_;
+      pending.delta[pending.n] = 1;
+      ++pending.n;
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
@@ -272,7 +282,9 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
       }else if(woundresult == LockResult::SUCCESS){
         rcounter = 1;
         tuple->add_owner(thid_);
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+        pending.target[pending.n] = &this->waiter_count_;
+        pending.delta[pending.n] = 1;
+        ++pending.n;
         tuple->lock_.latch_unlock(rcounter);
         goto FINISH_READ_LOCK;
       }
@@ -440,7 +452,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   if(!has_older_waiter(tuple, this->local_timestamp)){
     if(wcounter == 0){
       tuple->add_owner(thid_);
-      this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      pending.target[pending.n] = &this->waiter_count_;
+      pending.delta[pending.n] = 1;
+      ++pending.n;
       wcounter = -1;
       acquired = true;
     }else{
@@ -456,7 +470,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           return Status::WARN_NOT_FOUND;
         }else if(woundresult == LockResult::SUCCESS){
           tuple->add_owner(thid_);
-          this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+          pending.target[pending.n] = &this->waiter_count_;
+          pending.delta[pending.n] = 1;
+          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
@@ -469,7 +485,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }
         if(wcounter == 0){
           tuple->add_owner(thid_);
-          this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+          pending.target[pending.n] = &this->waiter_count_;
+          pending.delta[pending.n] = 1;
+          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
@@ -614,7 +632,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
     if(wcounter == 0){
       tuple->add_owner(thid_);
-      this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      pending.target[pending.n] = &this->waiter_count_;
+      pending.delta[pending.n] = 1;
+      ++pending.n;
       wcounter = -1;
       acquired = true;
     }else{
@@ -633,7 +653,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }else if(woundresult == LockResult::SUCCESS){
           wcounter = -1;
           tuple->add_owner(thid_);
-          this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+          pending.target[pending.n] = &this->waiter_count_;
+          pending.delta[pending.n] = 1;
+          ++pending.n;
           acquired = true;
         }
       }
@@ -645,7 +667,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }
         if(wcounter == 0){
           tuple->add_owner(thid_);
-          this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+          pending.target[pending.n] = &this->waiter_count_;
+          pending.delta[pending.n] = 1;
+          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
@@ -786,7 +810,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(result >= 0){
         dequeue(tuple);
         tuple->add_owner(thid_);
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+        pending.target[pending.n] = &this->waiter_count_;
+        pending.delta[pending.n] = 1;
+        ++pending.n;
 		    result ++;
 		    tuple->lock_.latch_unlock(result);
         return LockResult::SUCCESS;
@@ -832,7 +858,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if(result == 0){
         dequeue(tuple);
         tuple->add_owner(thid_);
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+        pending.target[pending.n] = &this->waiter_count_;
+        pending.delta[pending.n] = 1;
+        ++pending.n;
         result = -1;
         tuple->lock_.latch_unlock(result);
         return LockResult::SUCCESS;
