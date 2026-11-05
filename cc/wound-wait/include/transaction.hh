@@ -50,6 +50,7 @@ public:
   std::vector<ReaderWriteLock*> w_lock_list_;
 
   alignas(CACHE_LINE_SIZE) std::atomic<TransactionStatus> status_ = TransactionStatus::inflight;
+  alignas(CACHE_LINE_SIZE) std::atomic<int> waiter_count_ = 0;
   alignas(CACHE_LINE_SIZE) WaitEntry wait_entry;
 
   TxExecutor(int thid, Result* res, const bool& quit)
@@ -109,6 +110,10 @@ public:
   LockResult wound_writelock(Tuple *tuple);
 
   int wound_readlock(Tuple *tuple, int counter);
+
+  void enqueue(Tuple* tuple);
+
+  void dequeue(Tuple* tuple);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);
