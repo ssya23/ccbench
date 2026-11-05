@@ -111,9 +111,9 @@ public:
 
   int wound_readlock(Tuple *tuple, int counter);
 
-  void enqueue(Tuple* tuple);
+  uint64_t enqueue(Tuple* tuple);
 
-  void dequeue(Tuple* tuple);
+  uint64_t dequeue(Tuple* tuple);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);

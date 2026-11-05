@@ -222,28 +222,24 @@ FINISH_READ:
   return Status::OK;
 }
 
-void TxExecutor::enqueue(Tuple* tuple) {
+uint64_t TxExecutor::enqueue(Tuple* tuple) {
   this->wait_entry.insertInto(tuple, this->local_timestamp);
+  uint64_t older = 0;
   for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) {
-      pending.target[pending.n] = &AllExecutors[i]->waiter_count_;
-      pending.delta[pending.n] = 1;
-      ++pending.n;
-    }
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) older |= uint64_t{1} << i;
   }
+  return older;
 }
 
-void TxExecutor::dequeue(Tuple* tuple) {
+uint64_t TxExecutor::dequeue(Tuple* tuple) {
   this->wait_entry.removeFrom(tuple);
+  uint64_t older = 0;
   for (uint64_t bits = tuple->owners_bitmap; bits != 0; bits &= bits - 1) {
     const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) {
-      pending.target[pending.n] = &AllExecutors[i]->waiter_count_;
-      pending.delta[pending.n] = -1;
-      ++pending.n;
-    }
+    if (AllExecutors[i]->local_timestamp < this->local_timestamp) older |= uint64_t{1} << i;
   }
+  return older;
 }
 
 static inline bool has_older_waiter(Tuple* tuple, int ts) {
@@ -262,11 +258,9 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
     if(rcounter >= 0){
       tuple->add_owner(thid_);
-      pending.target[pending.n] = &this->waiter_count_;
-      pending.delta[pending.n] = 1;
-      ++pending.n;
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
+      this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
       goto FINISH_READ_LOCK;
 
     }else if(rcounter == -1){ 
@@ -282,17 +276,17 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
       }else if(woundresult == LockResult::SUCCESS){
         rcounter = 1;
         tuple->add_owner(thid_);
-        pending.target[pending.n] = &this->waiter_count_;
-        pending.delta[pending.n] = 1;
-        ++pending.n;
         tuple->lock_.latch_unlock(rcounter);
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
         goto FINISH_READ_LOCK;
       }
     }
   }
 
-  enqueue(tuple);
+  uint64_t older;
+  older = enqueue(tuple);
   tuple->lock_.latch_unlock(rcounter);
+  for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
 
   LockResult result;
   result = wait_readop(tuple);
@@ -413,8 +407,10 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           write_set_.emplace_back(s, key, (*rItr).rcdptr_, std::move(body),OpType::UPDATE);
           goto FINISH_WRITE;
         }
-        enqueue((*rItr).rcdptr_);
+        uint64_t older;
+        older = enqueue((*rItr).rcdptr_);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
         if (result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
@@ -449,12 +445,11 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
   bool acquired;
   acquired = false;
+  uint64_t older;
+  older = 0;
   if(!has_older_waiter(tuple, this->local_timestamp)){
     if(wcounter == 0){
       tuple->add_owner(thid_);
-      pending.target[pending.n] = &this->waiter_count_;
-      pending.delta[pending.n] = 1;
-      ++pending.n;
       wcounter = -1;
       acquired = true;
     }else{
@@ -470,9 +465,6 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
           return Status::WARN_NOT_FOUND;
         }else if(woundresult == LockResult::SUCCESS){
           tuple->add_owner(thid_);
-          pending.target[pending.n] = &this->waiter_count_;
-          pending.delta[pending.n] = 1;
-          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
@@ -485,21 +477,20 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
         }
         if(wcounter == 0){
           tuple->add_owner(thid_);
-          pending.target[pending.n] = &this->waiter_count_;
-          pending.delta[pending.n] = 1;
-          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
       }
       
-      if(!acquired)enqueue(tuple);
+      if(!acquired)older = enqueue(tuple);
     }
 
-  }else enqueue(tuple);
+  }else older = enqueue(tuple);
   
 
   tuple->lock_.latch_unlock(wcounter);
+  for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+  if(acquired) this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
 
   if(!acquired){
     LockResult result = wait_writeop(tuple);
@@ -597,8 +588,10 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
           goto FINISH_DELETE;
         }
 
-        enqueue((*rItr).rcdptr_);
+        uint64_t older;
+        older = enqueue((*rItr).rcdptr_);
         (*rItr).rcdptr_->lock_.latch_unlock(upcounter);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
 
         LockResult result = wait_upgradeop((*rItr).rcdptr_);
         if(result == LockResult::ABORTED) return Status::ERROR_LOCK_FAILED;
@@ -628,13 +621,12 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
   bool acquired;
   acquired = false;
+  uint64_t older;
+  older = 0;
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
     if(wcounter == 0){
       tuple->add_owner(thid_);
-      pending.target[pending.n] = &this->waiter_count_;
-      pending.delta[pending.n] = 1;
-      ++pending.n;
       wcounter = -1;
       acquired = true;
     }else{
@@ -653,9 +645,6 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }else if(woundresult == LockResult::SUCCESS){
           wcounter = -1;
           tuple->add_owner(thid_);
-          pending.target[pending.n] = &this->waiter_count_;
-          pending.delta[pending.n] = 1;
-          ++pending.n;
           acquired = true;
         }
       }
@@ -667,22 +656,21 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
         }
         if(wcounter == 0){
           tuple->add_owner(thid_);
-          pending.target[pending.n] = &this->waiter_count_;
-          pending.delta[pending.n] = 1;
-          ++pending.n;
           wcounter = -1;
           acquired = true;
         }
       }
 
-      if (!acquired)enqueue(tuple);
+      if (!acquired)older = enqueue(tuple);
     }
 
   }else{
-    enqueue(tuple);
+    older = enqueue(tuple);
   }
 
   tuple->lock_.latch_unlock(wcounter);
+  for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+  if(acquired) this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
 
   if(!acquired){
     LockResult result = wait_writeop(tuple);
@@ -777,8 +765,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::ABORTED;
     }
 
@@ -786,8 +775,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
 
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::NOT_FOUND;
     }
 
@@ -797,8 +787,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       int result = tuple->lock_.latch_lock();
 
       if(tuple->delete_flag == true){
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->lock_.latch_unlock(result);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
         return LockResult::NOT_FOUND;
       }
 
@@ -808,13 +799,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       }
 
       if(result >= 0){
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->add_owner(thid_);
-        pending.target[pending.n] = &this->waiter_count_;
-        pending.delta[pending.n] = 1;
-        ++pending.n;
 		    result ++;
 		    tuple->lock_.latch_unlock(result);
+		    for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
+		    this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
         return LockResult::SUCCESS;
       }else  tuple->lock_.latch_unlock(result);
     
@@ -827,8 +817,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::ABORTED;
     }
 
@@ -836,8 +827,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
 
     if(tuple->delete_flag == true){
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::NOT_FOUND;
     }
     
@@ -845,8 +837,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
     if (expected == 0){
       int result = tuple->lock_.latch_lock();
       if(tuple->delete_flag == true){
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->lock_.latch_unlock(result);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
         return LockResult::NOT_FOUND;
       }
 
@@ -856,13 +849,12 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       }
 
       if(result == 0){
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->add_owner(thid_);
-        pending.target[pending.n] = &this->waiter_count_;
-        pending.delta[pending.n] = 1;
-        ++pending.n;
         result = -1;
         tuple->lock_.latch_unlock(result);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
         return LockResult::SUCCESS;
       }else  tuple->lock_.latch_unlock(result);
       
@@ -875,8 +867,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
     if (this->status_.load() == TransactionStatus::aborted){
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::ABORTED;
     }
 
@@ -884,8 +877,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
     if(tuple->delete_flag == true) {
       int r = tuple->lock_.latch_lock();
-      dequeue(tuple);
+      uint64_t older = dequeue(tuple);
       tuple->lock_.latch_unlock(r);
+      for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       return LockResult::NOT_FOUND;
     }
 
@@ -895,8 +889,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
       //ここでstatusを確認することによって,自分のReadLockが解放されていないことを保証する.
       if(this->status_ == TransactionStatus::aborted){
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->lock_.latch_unlock(result);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
         return LockResult::ABORTED;
       }
 
@@ -907,8 +902,9 @@ LockResult TxExecutor::wait_upgradeop(Tuple* tuple) {
 
       if(result == 1){
         result = -1;
-        dequeue(tuple);
+        uint64_t older = dequeue(tuple);
         tuple->lock_.latch_unlock(result);
+        for (uint64_t bits = older; bits != 0; bits &= bits - 1) AllExecutors[std::countr_zero(bits)]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
         return LockResult::SUCCESS;
 
       }else tuple->lock_.latch_unlock(result);
