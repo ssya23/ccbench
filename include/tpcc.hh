@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <set>
@@ -47,6 +48,7 @@ public:
 
   NEWQUERY:
     query.generate(w_id, option);
+    const auto start = std::chrono::steady_clock::now();
 
   RETRY:
     if (tx.isLeader()) { tx.leaderWork(); }
@@ -119,6 +121,7 @@ public:
     if (loadAcquire(tx.quit_)) return;
     tx.result_->local_commit_counts_++;
     tx.result_->local_commit_counts_per_tx_[get_tx_type(query.type)]++;
+    tx.result_->local_latency_per_tx_[get_tx_type(query.type)] += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
 
     return;
   }
