@@ -258,7 +258,7 @@ void TxExecutor::IncrementCounter(Tuple* tuple) {
     for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
       int i = std::countr_zero(bits);
       int ts = AllExecutors[i]->local_timestamp;
-      if (tuple->max_waiters_ts < ts && ts < this->local_timestamp) {
+      if (tuple->max_waiters_ts <= ts && ts < this->local_timestamp) {
         AllExecutors[i]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
       }
     }
@@ -271,7 +271,7 @@ void TxExecutor::DecrementCounter(Tuple* tuple, int new_max) {
     for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
       int i = std::countr_zero(bits);
       int ts = AllExecutors[i]->local_timestamp;
-      if (new_max < ts && ts < this->local_timestamp) {
+      if (new_max <= ts && ts < this->local_timestamp) {
         AllExecutors[i]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
       }
     }
