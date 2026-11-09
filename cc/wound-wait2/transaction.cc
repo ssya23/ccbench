@@ -303,11 +303,12 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     if(rcounter >= 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      if (tuple->max_waiters_ts > this->local_timestamp) {
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
-      }
+      bool inc = tuple->max_waiters_ts > this->local_timestamp;
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
+      if (inc) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       goto FINISH_READ_LOCK;
     }
   }
@@ -470,6 +471,8 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
   bool acquired;
   acquired = false;
+  bool inc;
+  inc = false;
 
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
@@ -493,9 +496,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      if (tuple->max_waiters_ts > this->local_timestamp) {
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
-      }
+      inc = tuple->max_waiters_ts > this->local_timestamp;
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -503,6 +504,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   }else enqueue(tuple);
 
   tuple->lock_.latch_unlock(wcounter);
+  if (inc) {
+    this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+  }
 
   if(!acquired){
     LockResult result = wait_writeop(tuple);
@@ -637,6 +641,8 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
   bool acquired;
   acquired = false;
+  bool inc;
+  inc = false;
 
   if(!has_older_waiter(tuple, this->local_timestamp)){
 
@@ -660,9 +666,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      if (tuple->max_waiters_ts > this->local_timestamp) {
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
-      }
+      inc = tuple->max_waiters_ts > this->local_timestamp;
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -670,6 +674,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   }else enqueue(tuple);
 
   tuple->lock_.latch_unlock(wcounter);
+  if (inc) {
+    this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+  }
 
   if(!acquired){
     LockResult result = wait_writeop(tuple);
@@ -823,11 +830,12 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      if (tuple->max_waiters_ts > this->local_timestamp) {
-        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
-      }
+      bool inc = tuple->max_waiters_ts > this->local_timestamp;
       result++;
       tuple->lock_.latch_unlock(result);
+      if (inc) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       return LockResult::SUCCESS;
     }
 
@@ -910,10 +918,11 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      if (tuple->max_waiters_ts > this->local_timestamp) {
+      bool inc = tuple->max_waiters_ts > this->local_timestamp;
+      tuple->lock_.latch_unlock(result);
+      if (inc) {
         this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
       }
-      tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
     }
 
