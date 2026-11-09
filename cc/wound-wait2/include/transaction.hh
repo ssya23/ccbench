@@ -114,6 +114,10 @@ public:
   void enqueue(Tuple* tuple);
 
   void dequeue(Tuple* tuple);
+
+  void IncrementCounter(Tuple* tuple);
+
+  void DecrementCounter(Tuple* tuple, int new_max);
 };
 
 static_assert(TxExecutorLike<TxExecutor>);

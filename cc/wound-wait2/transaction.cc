@@ -238,20 +238,44 @@ FINISH_READ:
 }
 
 void TxExecutor::enqueue(Tuple* tuple) {
+  IncrementCounter(tuple);
   this->wait_entry.insertInto(tuple, this->local_timestamp);
   tuple->waiter_size++;
-  for(uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1){
-    const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
-  }
 }
 
 void TxExecutor::dequeue(Tuple* tuple) {
+  int new_max = -1;
+  if (this->wait_entry.prev != nullptr) {
+    new_max = this->wait_entry.prev->ts;
+  }
   this->wait_entry.removeFrom(tuple);
   tuple->waiter_size--;
-  for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
-    const int i = std::countr_zero(bits);
-    if (AllExecutors[i]->local_timestamp < this->local_timestamp) AllExecutors[i]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
+  DecrementCounter(tuple, new_max);
+}
+
+void TxExecutor::IncrementCounter(Tuple* tuple) {
+  if (this->local_timestamp > tuple->max_waiters_ts) {
+    for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
+      int i = std::countr_zero(bits);
+      int ts = AllExecutors[i]->local_timestamp;
+      if (tuple->max_waiters_ts < ts && ts < this->local_timestamp) {
+        AllExecutors[i]->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+    tuple->max_waiters_ts = this->local_timestamp;
+  }
+}
+
+void TxExecutor::DecrementCounter(Tuple* tuple, int new_max) {
+  if (this->local_timestamp == tuple->max_waiters_ts) {
+    for (uint64_t bits = tuple->owners_bitmap.load(std::memory_order_relaxed); bits != 0; bits &= bits - 1) {
+      int i = std::countr_zero(bits);
+      int ts = AllExecutors[i]->local_timestamp;
+      if (new_max < ts && ts < this->local_timestamp) {
+        AllExecutors[i]->waiter_count_.fetch_sub(1, std::memory_order_relaxed);
+      }
+    }
+    tuple->max_waiters_ts = new_max;
   }
 }
 
@@ -279,7 +303,9 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
     if(rcounter >= 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      if (tuple->max_waiters_ts > this->local_timestamp) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       rcounter++;
       tuple->lock_.latch_unlock(rcounter);
       goto FINISH_READ_LOCK;
@@ -467,7 +493,9 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      if (tuple->max_waiters_ts > this->local_timestamp) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -632,7 +660,9 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
     if(wcounter == 0){
       tuple->add_owner(thid_);
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
-      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      if (tuple->max_waiters_ts > this->local_timestamp) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       wcounter = -1;
       acquired = true;
     }else enqueue(tuple);
@@ -793,7 +823,9 @@ LockResult TxExecutor::wait_readop(Tuple* tuple) {
       if(local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      if (tuple->max_waiters_ts > this->local_timestamp) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       result++;
       tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
@@ -878,7 +910,9 @@ LockResult TxExecutor::wait_writeop(Tuple* tuple) {
       if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)){
         tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
       }
-      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      if (tuple->max_waiters_ts > this->local_timestamp) {
+        this->waiter_count_.fetch_add(1, std::memory_order_relaxed);
+      }
       tuple->lock_.latch_unlock(result);
       return LockResult::SUCCESS;
     }
