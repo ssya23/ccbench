@@ -279,8 +279,8 @@ void TxExecutor::DecrementCounter(Tuple* tuple, int new_max) {
   }
 }
 
-static inline bool has_older_waiter(Tuple* tuple, int ts) {
-  return tuple->waiters_head != nullptr && tuple->waiters_head->ts < ts;
+static inline bool is_head(Tuple* tuple, int ts) {
+  return tuple->waiters_head == nullptr || tuple->waiters_head->ts >= ts;
 }
 
 LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tuple, int rcounter){
@@ -288,7 +288,7 @@ LockResult TxExecutor::read_internal(Storage s, std::string_view key, Tuple* tup
 
   if (reconnoitering_) goto FINISH_READ_LOCK;
 
-  if(!has_older_waiter(tuple, this->local_timestamp)){
+  if(is_head(tuple, this->local_timestamp)){
 
     if(rcounter == -1){
       bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
@@ -416,7 +416,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 
       Tuple* utuple = (*rItr).rcdptr_;
 
-      if(!has_older_waiter(utuple, this->local_timestamp)){
+      if(is_head(utuple, this->local_timestamp)){
 
         if(upcounter > 1){
           bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || utuple->waiters_head != nullptr;
@@ -474,7 +474,7 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
   bool inc;
   inc = false;
 
-  if(!has_older_waiter(tuple, this->local_timestamp)){
+  if(is_head(tuple, this->local_timestamp)){
 
     if(wcounter == -1){
       bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
@@ -590,7 +590,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
 
       Tuple* utuple = (*rItr).rcdptr_;
 
-      if(!has_older_waiter(utuple, this->local_timestamp)){
+      if(is_head(utuple, this->local_timestamp)){
 
         if(upcounter > 1){
           bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || utuple->waiters_head != nullptr;
@@ -644,7 +644,7 @@ Status TxExecutor::delete_record(Storage s, std::string_view key) {
   bool inc;
   inc = false;
 
-  if(!has_older_waiter(tuple, this->local_timestamp)){
+  if(is_head(tuple, this->local_timestamp)){
 
     if(wcounter == -1){
       bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
