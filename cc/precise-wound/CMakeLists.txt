@@ -1,4 +1,4 @@
-ccbench_add_protocol(wound-wait2
+ccbench_add_protocol(precise-wound
   SOURCES   transaction.cc util.cc
   WORKLOADS bomb tpcc ycsb
   OPTIONS
