@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -104,6 +105,7 @@ public:
     tx.result_->local_make_procedure_latency_ += rdtscp() - start;
 #endif
     tx.is_ronly_ = (*tx.pro_set_.begin()).ronly_;
+    const auto runtime_start = std::chrono::steady_clock::now();
 
   RETRY:
     if (tx.isLeader()) { tx.leaderWork(); }
@@ -165,6 +167,10 @@ public:
     }
     storeRelease(tx.result_->local_commit_counts_,
                  loadAcquire(tx.result_->local_commit_counts_) + 1);
+    tx.result_->local_runtime_ns_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - runtime_start)
+            .count();
 
     return;
   }
