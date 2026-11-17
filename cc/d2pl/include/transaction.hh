@@ -82,6 +82,16 @@ public:
               std::string_view right_key, bool r_exclusive,
               std::vector<TupleBody*>& result, int64_t limit);
 
+  Status read_for_update(Storage s, std::string_view key, TupleBody** body) {
+    return read(s, key, body);
+  }
+
+  Status scan_for_update(Storage s, std::string_view left_key, bool l_exclusive,
+                         std::string_view right_key, bool r_exclusive,
+                         std::vector<TupleBody*>& result, int64_t limit) {
+    return scan(s, left_key, l_exclusive, right_key, r_exclusive, result, limit);
+  }
+
   void write(uint64_t key);
   Status update(Storage s, std::string_view key, TupleBody&& body);
 

@@ -363,7 +363,12 @@ Status TxExecutor::update(Storage s, std::string_view key, TupleBody&& body) {
 #endif
 
   // if it already wrote the key object once.
-  if (searchWriteSet(s, key)) goto FINISH_WRITE;
+  SetElement<Tuple>* e;
+  e = searchWriteSet(s, key);
+  if (e) {
+    e->body_ = std::move(body);
+    goto FINISH_WRITE;
+  }
 
   for (auto rItr = read_set_.begin(); rItr != read_set_.end(); ++rItr) {
 
@@ -490,6 +495,102 @@ FINISH_WRITE:
 #endif
 
 return Status::OK;
+}
+
+Status TxExecutor::read_for_update(Storage s, std::string_view key, TupleBody** body) {
+  SetElement<Tuple>* e;
+  e = searchWriteSet(s, key);
+  if (e) {
+    *body = &(e->body_);
+    return Status::OK;
+  }
+
+  Tuple* tuple;
+  tuple = Masstrees[get_storage(s)].get_value(key);
+#if ADD_ANALYSIS
+  ++result_->local_tree_traversal_;
+#endif
+
+  if (tuple == nullptr) return Status::WARN_NOT_FOUND;
+
+  int wcounter;
+  wcounter = tuple->lock_.latch_lock();
+
+  if(tuple->delete_flag == true){
+    tuple->lock_.latch_unlock(wcounter);
+    return Status::WARN_NOT_FOUND;
+  }
+
+  bool acquired;
+  acquired = false;
+
+  if(!has_older_waiter(tuple, this->local_timestamp)){
+
+    if(wcounter == -1){
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
+      if(waited){
+        LockResult woundresult = wound_writelock(tuple);
+        if (woundresult == LockResult::ABORTED) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
+        else if(woundresult == LockResult::NOT_FOUND) { tuple->lock_.latch_unlock(0); return Status::WARN_NOT_FOUND; }
+        else if(woundresult == LockResult::SUCCESS) wcounter = 0;
+      }
+
+    }else if(wcounter >= 1){
+      bool waited = this->waiter_count_.load(std::memory_order_relaxed) > 0 || tuple->waiters_head != nullptr;
+      if(waited){
+        wcounter = wound_readlock(tuple, wcounter);
+        if(this->status_.load(std::memory_order_acquire) == TransactionStatus::aborted) { tuple->lock_.latch_unlock(wcounter); return Status::ERROR_LOCK_FAILED; }
+      }
+    }
+
+    if(wcounter == 0){
+      tuple->add_owner(thid_);
+      if (local_timestamp > tuple->max_owner_ts.load(std::memory_order_relaxed)) tuple->max_owner_ts.store(local_timestamp, std::memory_order_relaxed);
+      this->waiter_count_.fetch_add(tuple->waiter_size, std::memory_order_relaxed);
+      wcounter = -1;
+      acquired = true;
+    }else enqueue(tuple);
+
+  }else enqueue(tuple);
+
+  tuple->lock_.latch_unlock(wcounter);
+
+  if(!acquired){
+    LockResult result = wait_writeop(tuple);
+    if(result == LockResult::ABORTED)return Status::ERROR_LOCK_FAILED;
+    if(result == LockResult::NOT_FOUND)return Status::WARN_NOT_FOUND;
+  }
+
+  TupleBody copy(tuple->body_.get_key(), tuple->body_.get_val(),
+                 tuple->body_.get_val_align());
+  write_set_.emplace_back(s, key, tuple, std::move(copy), OpType::UPDATE);
+
+  *body = &(write_set_.back().body_);
+  return Status::OK;
+}
+
+Status TxExecutor::scan_for_update(const Storage s, std::string_view left_key,
+                                   bool l_exclusive, std::string_view right_key,
+                                   bool r_exclusive,
+                                   std::vector<TupleBody*>& result,
+                                   int64_t limit) {
+  result.clear();
+
+  std::vector<Tuple*> scan_res;
+  Masstrees[get_storage(s)].scan(
+      left_key.empty() ? nullptr : left_key.data(), left_key.size(),
+      l_exclusive, right_key.empty() ? nullptr : right_key.data(),
+      right_key.size(), r_exclusive, &scan_res, limit);
+
+  for (auto&& itr : scan_res) {
+    TupleBody* body;
+    Status stat = read_for_update(s, itr->body_.get_key(), &body);
+    if (stat == Status::WARN_NOT_FOUND) continue;
+    if (stat != Status::OK) return stat;
+    result.emplace_back(body);
+  }
+
+  return Status::OK;
 }
 
 Status TxExecutor::insert(Storage s, std::string_view key, TupleBody&& body) {

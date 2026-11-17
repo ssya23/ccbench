@@ -22,7 +22,7 @@ bool get_and_update_warehouse(TxExecutor& tx, uint16_t w_id, double h_amount,
   SimpleKey<8> w_key;
   Warehouse::CreateKey(w_id, w_key.ptr());
   TupleBody* body;
-  Status stat = tx.read(Storage::Warehouse, w_key.view(), &body);
+  Status stat = tx.read_for_update(Storage::Warehouse, w_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   Warehouse& old_ware = body->get_value().cast_to<Warehouse>();
@@ -59,7 +59,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   SimpleKey<8> d_key;
   District::CreateKey(w_id, d_id, d_key.ptr());
   TupleBody* body;
-  Status stat = tx.read(Storage::District, d_key.view(), &body);
+  Status stat = tx.read_for_update(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   District& old_dist = body->get_value().cast_to<District>();
@@ -162,7 +162,7 @@ bool get_and_update_customer(TxExecutor& tx, const SimpleKey<8>& c_key,
                              uint32_t c_id, uint8_t c_d_id, uint16_t c_w_id,
                              uint8_t d_id, uint16_t w_id, double h_amount) {
   TupleBody* body;
-  Status stat = tx.read(Storage::Customer, c_key.view(), &body);
+  Status stat = tx.read_for_update(Storage::Customer, c_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   const Customer& old_cust = body->get_value().cast_to<Customer>();
