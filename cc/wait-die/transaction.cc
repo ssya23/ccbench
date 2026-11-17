@@ -456,6 +456,11 @@ Status TxExecutor::read_for_update(Storage s, std::string_view key, TupleBody** 
 
   if (tuple == nullptr) return Status::WARN_NOT_FOUND;
 
+  return read_for_update_internal(s, key, tuple, body);
+}
+
+Status TxExecutor::read_for_update_internal(Storage s, std::string_view key,
+                                            Tuple* tuple, TupleBody** body) {
   int wcounter;
   wcounter = tuple->lock_.latch_lock();
 
@@ -518,8 +523,14 @@ Status TxExecutor::scan_for_update(const Storage s, std::string_view left_key,
       right_key.size(), r_exclusive, &scan_res, limit);
 
   for (auto&& itr : scan_res) {
+    SetElement<Tuple>* e = searchWriteSet(s, itr->body_.get_key());
+    if (e) {
+      result.emplace_back(&(e->body_));
+      continue;
+    }
+
     TupleBody* body;
-    Status stat = read_for_update(s, itr->body_.get_key(), &body);
+    Status stat = read_for_update_internal(s, itr->body_.get_key(), itr, &body);
     if (stat == Status::WARN_NOT_FOUND) continue;
     if (stat != Status::OK) return stat;
     result.emplace_back(body);

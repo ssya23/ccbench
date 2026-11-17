@@ -75,6 +75,8 @@ public:
               std::vector<TupleBody*>& result, int64_t limit);
 
   Status read_for_update(Storage s, std::string_view key, TupleBody** body);
+  Status read_for_update_internal(Storage s, std::string_view key, Tuple* tuple,
+                                  TupleBody** body);
 
   Status scan_for_update(Storage s, std::string_view left_key, bool l_exclusive,
                          std::string_view right_key, bool r_exclusive,
