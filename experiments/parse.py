@@ -18,6 +18,7 @@ GLOBAL_KEYS = {
     "abort_rate:": "abort_rate",
     "commit_counts_:": "commits",
     "abort_counts_:": "aborts",
+    "average_runtime[us]:": "avg_runtime_us",
 }
 # Transaction type: X の下にある値。列名は X_<名前> になる。
 PER_TX_KEYS = {
