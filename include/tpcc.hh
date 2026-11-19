@@ -96,18 +96,20 @@ public:
 
     if (tx.status_ == TransactionStatus::aborted) {
       tx.abort();
-      const uint64_t trial_ns =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - trial_start)
-              .count();
-      tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
-      tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
-      Backoff::last_backoff_ns_ = 0;
-      tx.result_->local_abort_counts_++;
-      tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
+      if (!loadAcquire(tx.quit_)) {
+        const uint64_t trial_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - trial_start)
+                .count();
+        tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+        tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+        Backoff::last_backoff_ns_ = 0;
+        tx.result_->local_abort_counts_++;
+        tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
 #if ADD_ANALYSIS
-      ++tx.result_->local_early_aborts_;
+        ++tx.result_->local_early_aborts_;
 #endif
+      }
       /* rbk==1 の NewOrder は generate() が存在しない商品番号を作るので
        * (tpcc_query.hh: items[ol_cnt-1].ol_i_id += max_items)、再実行しても
        * Item テーブルは読み取り専用で行が増えないため永遠に失敗する。
@@ -121,16 +123,18 @@ public:
 
     if (!tx.commit()) {
       tx.abort();
-      const uint64_t trial_ns =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - trial_start)
-              .count();
-      tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
-      tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
-      Backoff::last_backoff_ns_ = 0;
       if (tx.status_ == TransactionStatus::invalid) return;
-      tx.result_->local_abort_counts_++;
-      tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
+      if (!loadAcquire(tx.quit_)) {
+        const uint64_t trial_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - trial_start)
+                .count();
+        tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+        tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+        Backoff::last_backoff_ns_ = 0;
+        tx.result_->local_abort_counts_++;
+        tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
+      }
       goto RETRY;
     }
 
