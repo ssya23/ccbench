@@ -21,9 +21,6 @@ public:
   uint64_t local_abort_counts_per_tx_[MAX_TX_TYPE] = {0};
   int64_t local_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t local_runtime_ns_ = 0;
-  uint64_t local_committed_trial_ns_ = 0;
-  uint64_t local_aborted_trial_ns_ = 0;
-  uint64_t local_backoff_ns_ = 0;
   uint64_t local_success_fw_ = 0;
 #if ADD_ANALYSIS
   uint64_t local_abort_by_operation_ = 0;
@@ -73,9 +70,6 @@ public:
   uint64_t total_abort_counts_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_latency_per_tx_[MAX_TX_TYPE] = {0};
   uint64_t total_runtime_ns_ = 0;
-  uint64_t total_committed_trial_ns_ = 0;
-  uint64_t total_aborted_trial_ns_ = 0;
-  uint64_t total_backoff_ns_ = 0;
   uint64_t total_success_fw_ = 0;
 #if ADD_ANALYSIS
   uint64_t total_abort_by_operation_ = 0;
@@ -129,7 +123,6 @@ public:
 
   void displayTps(size_t extime, size_t thread_num);
   void displayAverageRuntime();
-  void displayTrialBreakdown();
 
   void displayOps(size_t extime, size_t op_num, size_t batch_op_num);
 
