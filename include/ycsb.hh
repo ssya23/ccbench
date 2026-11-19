@@ -4,6 +4,7 @@
 #include <thread>
 #include <vector>
 
+#include "backoff.hh"
 #include "config.hh"
 #include "debug.hh"
 #include "heap_object.hh"
@@ -112,6 +113,7 @@ public:
 
     if (loadAcquire(tx.quit_)) return;
 
+    const auto trial_start = std::chrono::steady_clock::now();
     tx.begin();
     SimpleKey<8> key[tx.pro_set_.size()];
     HeapObject obj[tx.pro_set_.size()];
@@ -150,6 +152,13 @@ public:
 
       if (tx.status_ == TransactionStatus::aborted) {
         tx.abort();
+        const uint64_t trial_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - trial_start)
+                .count();
+        tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+        tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+        Backoff::last_backoff_ns_ = 0;
         ++tx.result_->local_abort_counts_;
 #if ADD_ANALYSIS
         ++tx.result_->local_early_aborts_;
@@ -162,14 +171,26 @@ public:
 
     if (!tx.commit()) {
       tx.abort();
+      const uint64_t trial_ns =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - trial_start)
+              .count();
+      tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+      tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+      Backoff::last_backoff_ns_ = 0;
       ++tx.result_->local_abort_counts_;
       goto RETRY;
     }
     storeRelease(tx.result_->local_commit_counts_,
                  loadAcquire(tx.result_->local_commit_counts_) + 1);
+    const auto commit_end = std::chrono::steady_clock::now();
+    tx.result_->local_committed_trial_ns_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            commit_end - trial_start)
+            .count();
     tx.result_->local_runtime_ns_ +=
         std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - runtime_start)
+            commit_end - runtime_start)
             .count();
 
     return;
