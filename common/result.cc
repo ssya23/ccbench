@@ -64,12 +64,10 @@ void Result::displayAverageRuntime() {
 }
 
 void Result::displayTrialBreakdown() {
-  if (total_commit_counts_ == 0) return;
-  long double commits = (long double) total_commit_counts_;
-  cout << fixed << setprecision(2)
-       << "average_committed_trial[us]:\t" << total_committed_trial_ns_ / 1000.0 / commits << endl
-       << "average_aborted_trial[us]:\t" << total_aborted_trial_ns_ / 1000.0 / commits << endl
-       << "average_backoff[us]:\t" << total_backoff_ns_ / 1000.0 / commits << endl;
+  cout << fixed << setprecision(3)
+       << "committed_trial_time[s]:\t" << total_committed_trial_ns_ / 1e9 << endl
+       << "aborted_trial_time[s]:\t" << total_aborted_trial_ns_ / 1e9 << endl
+       << "backoff_time[s]:\t" << total_backoff_ns_ / 1e9 << endl;
 }
 
 void Result::displayOps(size_t extime, size_t op_num, size_t batch_op_num) {
