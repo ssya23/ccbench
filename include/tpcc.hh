@@ -6,6 +6,7 @@
 #include <vector>
 #include <set>
 
+#include "backoff.hh"
 #include "config.hh"
 #include "debug.hh"
 #include "heap_object.hh"
@@ -55,6 +56,7 @@ public:
 
     if (loadAcquire(tx.quit_)) return;
 
+    const auto trial_start = std::chrono::steady_clock::now();
     tx.begin();
 
     switch (query.type) {
@@ -94,6 +96,13 @@ public:
 
     if (tx.status_ == TransactionStatus::aborted) {
       tx.abort();
+      const uint64_t trial_ns =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - trial_start)
+              .count();
+      tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+      tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+      Backoff::last_backoff_ns_ = 0;
       tx.result_->local_abort_counts_++;
       tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
 #if ADD_ANALYSIS
@@ -112,6 +121,13 @@ public:
 
     if (!tx.commit()) {
       tx.abort();
+      const uint64_t trial_ns =
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - trial_start)
+              .count();
+      tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+      tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+      Backoff::last_backoff_ns_ = 0;
       if (tx.status_ == TransactionStatus::invalid) return;
       tx.result_->local_abort_counts_++;
       tx.result_->local_abort_counts_per_tx_[get_tx_type(query.type)]++;
@@ -119,9 +135,14 @@ public:
     }
 
     if (loadAcquire(tx.quit_)) return;
+    const auto commit_end = std::chrono::steady_clock::now();
+    tx.result_->local_committed_trial_ns_ +=
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            commit_end - trial_start)
+            .count();
     tx.result_->local_commit_counts_++;
     tx.result_->local_commit_counts_per_tx_[get_tx_type(query.type)]++;
-    tx.result_->local_latency_per_tx_[get_tx_type(query.type)] += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+    tx.result_->local_latency_per_tx_[get_tx_type(query.type)] += std::chrono::duration_cast<std::chrono::microseconds>(commit_end - start).count();
 
     return;
   }
