@@ -40,12 +40,16 @@ concept TxExecutorLike = requires(T t, Storage s, std::string_view k,
                                   TupleBody** body,
                                   std::vector<TupleBody*>& result) {
   { t.read(s, k, body) } -> std::same_as<Status>;
+  { t.read_for_update(s, k, body) } -> std::same_as<Status>;
   { t.update(s, k, std::declval<TupleBody&&>()) } -> std::same_as<Status>;
   { t.insert(s, k, std::declval<TupleBody&&>()) } -> std::same_as<Status>;
   { t.delete_record(s, k) } -> std::same_as<Status>;
   { t.scan(s, k, false, k, false, result) } -> std::same_as<Status>;
   {
     t.scan(s, k, false, k, false, result, std::int64_t{})
+    } -> std::same_as<Status>;
+  {
+    t.scan_for_update(s, k, false, k, false, result, std::int64_t{})
     } -> std::same_as<Status>;
   { t.commit() } -> std::same_as<bool>;
   { t.abort() } -> std::same_as<void>;

@@ -32,11 +32,13 @@ All built protocols expose the same `TxExecutor` API expected by the workload te
 
 ```cpp
 Status read(Storage s, std::string_view key, TupleBody** body);
+Status read_for_update(Storage s, std::string_view key, TupleBody** body);   // SELECT ... FOR UPDATE; takes the WriteLock up front
 Status update(Storage s, std::string_view key, TupleBody&& body);   // SQL UPDATE; returns WARN_NOT_FOUND if row absent
 Status insert(Storage s, std::string_view key, TupleBody&& body);   // SQL INSERT
 Status delete_record(Storage s, std::string_view key);
 Status scan(..., std::vector<TupleBody*>& result);
 Status scan(..., std::vector<TupleBody*>& result, int64_t limit);   // limit form is required (TPC-C uses it)
+Status scan_for_update(..., std::vector<TupleBody*>& result, int64_t limit);   // FOR UPDATE version of scan (limit = -1 for all rows)
 bool   commit();
 void   abort();
 ```

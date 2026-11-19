@@ -57,7 +57,7 @@ bool get_and_update_district(TxExecutor& tx, uint8_t d_id, uint16_t w_id,
   SimpleKey<8> d_key;
   District::CreateKey(w_id, d_id, d_key.ptr());
   TupleBody* body;
-  Status stat = tx.read(Storage::District, d_key.view(), &body);
+  Status stat = tx.read_for_update(Storage::District, d_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   HeapObject d_obj;
@@ -192,7 +192,7 @@ bool get_and_update_stock(TxExecutor& tx, uint16_t ol_supply_w_id,
   SimpleKey<8> s_key;
   Stock::CreateKey(ol_supply_w_id, ol_i_id, s_key.ptr());
   TupleBody* body;
-  Status stat = tx.read(Storage::Stock, s_key.view(), &body);
+  Status stat = tx.read_for_update(Storage::Stock, s_key.view(), &body);
   if (FLAGS_tpcc_interactive_ms) sleepMs(FLAGS_tpcc_interactive_ms);
   if (stat != Status::OK || tx.status_ == TransactionStatus::aborted) { return false; }
   const Stock& old_sto = body->get_value().cast_to<Stock>();
