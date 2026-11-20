@@ -42,8 +42,8 @@ bool get_order_id(TxExecutor& tx, uint16_t w_id, uint8_t d_id, uint32_t& o_id,
   NewOrder::CreateKey(w_id, d_id + 1, 1, right_key.ptr());
   // Return value intentionally discarded: the empty-result and aborted
   // checks below cover both Status::OK and Status::WARN_NOT_FOUND.
-  (void) tx.scan(Storage::NewOrder, left_key.view(), false, right_key.view(),
-                 true, result, 1);
+  (void) tx.scan_for_update(Storage::NewOrder, left_key.view(), false,
+                            right_key.view(), true, result, 1);
   if (tx.status_ == TransactionStatus::aborted) { return false; }
   // Per TPC-C spec: if no NEW-ORDER row exists for this district, skip
   // delivery for this district only (caller continues with the next).
@@ -89,7 +89,7 @@ bool update_order_and_get_c_id(TxExecutor& tx, uint16_t w_id, uint8_t d_id,
   SimpleKey<8> o_key;
   Order::CreateKey(w_id, d_id, o_id, o_key.ptr());
   TupleBody* body;
-  Status status = tx.read(Storage::Order, o_key.view(), &body);
+  Status status = tx.read_for_update(Storage::Order, o_key.view(), &body);
   if (tx.status_ == TransactionStatus::aborted) { return false; }
   // tx.read leaves *body unchanged on WARN_NOT_FOUND; caller must check.
   if (status != Status::OK) { return false; }
@@ -132,8 +132,8 @@ bool update_order_line_and_get_ol_total(TxExecutor& tx, uint16_t w_id,
   SimpleKey<8> left_key, right_key;
   OrderLine::CreateKey(w_id, d_id, o_id, 1, left_key.ptr());
   OrderLine::CreateKey(w_id, d_id, o_id + 1, 1, right_key.ptr());
-  Status status = tx.scan(Storage::OrderLine, left_key.view(), false,
-                          right_key.view(), true, result);
+  Status status = tx.scan_for_update(Storage::OrderLine, left_key.view(),
+                                     false, right_key.view(), true, result, -1);
   if (tx.status_ == TransactionStatus::aborted) { return false; }
   if (status != Status::OK) { return false; }
   ol_total = 0.0;
@@ -147,12 +147,12 @@ bool update_order_line_and_get_ol_total(TxExecutor& tx, uint16_t w_id,
     memcpy(&new_ol, &ol, sizeof(new_ol));
 
     new_ol.OL_DELIVERY_D = ol_delivery_d;
+    ol_total += ol.OL_AMOUNT;
 
     status = tx.update(Storage::OrderLine, ol_key,
                        TupleBody(ol_key, std::move(ol_obj)));
     if (tx.status_ == TransactionStatus::aborted) { return false; }
     if (status != Status::OK) { return false; }
-    ol_total += ol.OL_AMOUNT;
   }
   return true;
 }
@@ -172,7 +172,7 @@ bool update_customer_balance(TxExecutor& tx, uint16_t w_id, uint8_t d_id,
   SimpleKey<8> c_key;
   Customer::CreateKey(w_id, d_id, c_id, c_key.ptr());
   TupleBody* body;
-  Status status = tx.read(Storage::Customer, c_key.view(), &body);
+  Status status = tx.read_for_update(Storage::Customer, c_key.view(), &body);
   if (tx.status_ == TransactionStatus::aborted) { return false; }
   if (status != Status::OK) { return false; }
   Customer& cust = body->get_value().cast_to<Customer>();

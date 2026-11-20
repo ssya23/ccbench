@@ -32,11 +32,13 @@ CCBench は主要な in-memory 並行性制御プロトコルを **共通の基�
 
 ```cpp
 Status read(Storage s, std::string_view key, TupleBody** body);
+Status read_for_update(Storage s, std::string_view key, TupleBody** body);   // SELECT ... FOR UPDATE; 最初から WriteLock を取る
 Status update(Storage s, std::string_view key, TupleBody&& body);   // SQL UPDATE; 該当行が無ければ WARN_NOT_FOUND
 Status insert(Storage s, std::string_view key, TupleBody&& body);   // SQL INSERT
 Status delete_record(Storage s, std::string_view key);
 Status scan(..., std::vector<TupleBody*>& result);
 Status scan(..., std::vector<TupleBody*>& result, int64_t limit);   // limit 形式は TPC-C が使う、必須
+Status scan_for_update(..., std::vector<TupleBody*>& result, int64_t limit);   // scan の FOR UPDATE 版 (limit = -1 で全件)
 bool   commit();
 void   abort();
 ```

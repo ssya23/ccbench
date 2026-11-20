@@ -3,6 +3,7 @@
 #include <x86intrin.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 
@@ -16,6 +17,7 @@ using namespace std;
 class Backoff {
 public:
   static std::atomic<double> Backoff_;
+  static inline thread_local uint64_t last_backoff_ns_ = 0;
   static constexpr double kMinBackoff = 0;
   static constexpr double kMaxBackoff = 1000;
   static constexpr double kIncrBackoff = 100;
@@ -92,6 +94,7 @@ public:
   }
 
   static void backoff(size_t clocks_per_us) {
+    const auto wait_start = std::chrono::steady_clock::now();
     uint64_t start(rdtscp()), stop;
     double now_backoff = Backoff_.load(std::memory_order_acquire);
 
@@ -105,6 +108,9 @@ public:
                                            now_backoff)))
         break;
     }
+    last_backoff_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now() - wait_start)
+                           .count();
   }
 };
 

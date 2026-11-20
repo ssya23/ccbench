@@ -56,6 +56,20 @@ void Result::displayTps(size_t extime, size_t thread_num) {
   cout << "throughput[tps]:\t" << result << endl;
 }
 
+void Result::displayAverageRuntime() {
+  if (total_runtime_ns_ == 0 || total_commit_counts_ == 0) return;
+  long double ave = (long double) total_runtime_ns_ / 1000.0 /
+                    (long double) total_commit_counts_;
+  cout << fixed << setprecision(2) << "average_runtime[us]:\t" << ave << endl;
+}
+
+void Result::displayTrialBreakdown() {
+  cout << fixed << setprecision(3)
+       << "committed_trial_time[s]:\t" << total_committed_trial_ns_ / 1e9 << endl
+       << "aborted_trial_time[s]:\t" << total_aborted_trial_ns_ / 1e9 << endl
+       << "backoff_time[s]:\t" << total_backoff_ns_ / 1e9 << endl;
+}
+
 void Result::displayOps(size_t extime, size_t op_num, size_t batch_op_num) {
   uint64_t result = (total_commit_counts_ * op_num +
                      total_batch_commit_counts_ * batch_op_num) /
@@ -636,6 +650,8 @@ void Result::displayAllResult([[maybe_unused]] size_t clocks_per_us,
   displayRusageRUMaxrss();
   displayAbortRate();
   displayTps(extime, thread_num);
+  displayAverageRuntime();
+  displayTrialBreakdown();
 }
 
 void Result::displayAllResult([[maybe_unused]] size_t clocks_per_us,
@@ -679,6 +695,8 @@ void Result::displayAllResult([[maybe_unused]] size_t clocks_per_us,
   displayRusageRUMaxrss();
   displayAbortRate();
   displayTps(extime, thread_num);
+  displayAverageRuntime();
+  displayTrialBreakdown();
   displayOps(extime, op_num, batch_op_num);
 }
 
@@ -688,6 +706,10 @@ void Result::addLocalAllResult(const Result& other) {
   addLocalCommitCounts(other.local_commit_counts_);
   addLocalBatchCommitCounts(other.local_batch_commit_counts_);
   addLocalSuccessForwarding(other.local_success_fw_);
+  total_runtime_ns_ += other.local_runtime_ns_;
+  total_committed_trial_ns_ += other.local_committed_trial_ns_;
+  total_aborted_trial_ns_ += other.local_aborted_trial_ns_;
+  total_backoff_ns_ += other.local_backoff_ns_;
 #if ADD_ANALYSIS
   addLocalAbortByOperation(other.local_abort_by_operation_);
   addLocalAbortByValidation(other.local_abort_by_validation_);

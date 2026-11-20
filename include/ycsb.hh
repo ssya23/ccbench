@@ -1,8 +1,10 @@
 #pragma once
 
+#include <chrono>
 #include <thread>
 #include <vector>
 
+#include "backoff.hh"
 #include "config.hh"
 #include "debug.hh"
 #include "heap_object.hh"
@@ -104,12 +106,14 @@ public:
     tx.result_->local_make_procedure_latency_ += rdtscp() - start;
 #endif
     tx.is_ronly_ = (*tx.pro_set_.begin()).ronly_;
+    const auto runtime_start = std::chrono::steady_clock::now();
 
   RETRY:
     if (tx.isLeader()) { tx.leaderWork(); }
 
     if (loadAcquire(tx.quit_)) return;
 
+    const auto trial_start = std::chrono::steady_clock::now();
     tx.begin();
     SimpleKey<8> key[tx.pro_set_.size()];
     HeapObject obj[tx.pro_set_.size()];
@@ -148,10 +152,19 @@ public:
 
       if (tx.status_ == TransactionStatus::aborted) {
         tx.abort();
-        ++tx.result_->local_abort_counts_;
+        if (!loadAcquire(tx.quit_)) {
+          const uint64_t trial_ns =
+              std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::steady_clock::now() - trial_start)
+                  .count();
+          tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+          tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+          Backoff::last_backoff_ns_ = 0;
+          ++tx.result_->local_abort_counts_;
 #if ADD_ANALYSIS
-        ++tx.result_->local_early_aborts_;
+          ++tx.result_->local_early_aborts_;
 #endif
+        }
         goto RETRY;
       }
 
@@ -160,11 +173,31 @@ public:
 
     if (!tx.commit()) {
       tx.abort();
-      ++tx.result_->local_abort_counts_;
+      if (!loadAcquire(tx.quit_)) {
+        const uint64_t trial_ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - trial_start)
+                .count();
+        tx.result_->local_aborted_trial_ns_ += trial_ns - Backoff::last_backoff_ns_;
+        tx.result_->local_backoff_ns_ += Backoff::last_backoff_ns_;
+        Backoff::last_backoff_ns_ = 0;
+        ++tx.result_->local_abort_counts_;
+      }
       goto RETRY;
     }
-    storeRelease(tx.result_->local_commit_counts_,
-                 loadAcquire(tx.result_->local_commit_counts_) + 1);
+    if (!loadAcquire(tx.quit_)) {
+      storeRelease(tx.result_->local_commit_counts_,
+                   loadAcquire(tx.result_->local_commit_counts_) + 1);
+      const auto commit_end = std::chrono::steady_clock::now();
+      tx.result_->local_committed_trial_ns_ +=
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              commit_end - trial_start)
+              .count();
+      tx.result_->local_runtime_ns_ +=
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              commit_end - runtime_start)
+              .count();
+    }
 
     return;
   }
